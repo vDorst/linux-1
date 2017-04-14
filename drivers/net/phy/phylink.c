@@ -994,8 +994,8 @@ void phylink_start(struct phylink *pl)
 		mod_timer(&pl->link_poll, jiffies + HZ);
 	if (pl->phydev)
 		phy_start(pl->phydev);
-	if (pl->sfp_bus)
-		sfp_upstream_start(pl->sfp_bus);
+	if (pl->netdev->sfp_bus)
+		sfp_upstream_start(pl->netdev->sfp_bus);
 }
 EXPORT_SYMBOL_GPL(phylink_start);
 
@@ -1012,8 +1012,8 @@ void phylink_stop(struct phylink *pl)
 {
 	ASSERT_RTNL();
 
-	if (pl->sfp_bus)
-		sfp_upstream_stop(pl->sfp_bus);
+	if (pl->netdev->sfp_bus)
+		sfp_upstream_stop(pl->netdev->sfp_bus);
 	if (pl->phydev)
 		phy_stop(pl->phydev);
 	del_timer_sync(&pl->link_poll);
