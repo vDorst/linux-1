@@ -849,22 +849,9 @@ static int kszphy_suspend(struct phy_device *phydev)
 
 static int kszphy_resume(struct phy_device *phydev)
 {
-	int ret;
-
 	genphy_resume(phydev);
 
-	ret = kszphy_config_reset(phydev);
-	if (ret)
-		return ret;
-
-	/* Enable PHY Interrupts */
-	if (phy_interrupt_is_valid(phydev)) {
-		phydev->interrupts = PHY_INTERRUPT_ENABLED;
-		if (phydev->drv->config_intr)
-			phydev->drv->config_intr(phydev);
-	}
-
-	return 0;
+	return kszphy_config_reset(phydev);
 }
 
 static int kszphy_probe(struct phy_device *phydev)
