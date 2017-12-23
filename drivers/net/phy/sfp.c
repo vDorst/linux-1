@@ -1554,9 +1554,9 @@ static int sfp_sm_mod_probe(struct sfp *sfp)
 		return -EAGAIN;
 	}
 
-	/* Cotsworks do not seem to update the checksums when they
-	 * do the final programming with the final module part number,
-	 * serial number and date code.
+	/* Cotsworks do not seem to update the checksums when they update the
+	 * module part number, serial number and date code. They also format
+	 * the date code incorrectly.
 	 */
 	cotsworks = !memcmp(id.base.vendor_name, "COTSWORKS       ", 16);
 
@@ -1595,11 +1595,12 @@ static int sfp_sm_mod_probe(struct sfp *sfp)
 
 	sfp->id = id;
 
-	date[0] = sfp->id.ext.datecode[4];
-	date[1] = sfp->id.ext.datecode[5];
+	/* Cotsworks also gets the date code wrong. */
+	date[0] = sfp->id.ext.datecode[4 - 2 * cotsworks];
+	date[1] = sfp->id.ext.datecode[5 - 2 * cotsworks];
 	date[2] = '-';
-	date[3] = sfp->id.ext.datecode[2];
-	date[4] = sfp->id.ext.datecode[3];
+	date[3] = sfp->id.ext.datecode[2 + 2 * cotsworks];
+	date[4] = sfp->id.ext.datecode[3 + 2 * cotsworks];
 	date[5] = '-';
 	date[6] = sfp->id.ext.datecode[0];
 	date[7] = sfp->id.ext.datecode[1];
