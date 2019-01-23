@@ -369,7 +369,28 @@ static void sfp_set_state(struct sfp *sfp, unsigned int state)
 
 static int sfp_read(struct sfp *sfp, bool a2, u8 addr, void *buf, size_t len)
 {
-	return sfp->read(sfp, a2, addr, buf, len);
+	const struct i2c_adapter_quirks *q = sfp->i2c->quirks;
+	int ret;
+	size_t rx_bytes = 0;
+
+	/* Many i2c hw have limited rx buffers, split-up request when needed. */
+	while ((q->max_read_len) && (len > q->max_read_len)) {
+		ret = sfp->read(sfp, a2, addr, buf, q->max_read_len);
+		if (ret < 0)
+			return ret;
+		rx_bytes += ret;
+		addr += q->max_read_len;
+		buf += q->max_read_len;
+		len -= q->max_read_len;
+	}
+
+	ret = sfp->read(sfp, a2, addr, buf, len);
+	if (ret < 0)
+		return ret;
+
+	rx_bytes += ret;
+
+	return rx_bytes;
 }
 
 static int sfp_write(struct sfp *sfp, bool a2, u8 addr, void *buf, size_t len)
