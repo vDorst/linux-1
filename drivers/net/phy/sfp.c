@@ -279,9 +279,16 @@ static void sfp_gpio_set_state(struct sfp *sfp, unsigned int state)
 static int sfp_i2c_read(struct sfp *sfp, bool a2, u8 dev_addr, void *buf,
 			size_t len)
 {
+	const struct i2c_adapter_quirks *q = sfp->i2c->quirks;
 	struct i2c_msg msgs[2];
+	u16 adapterlimit = U16_MAX;
 	u8 bus_addr = a2 ? 0x51 : 0x50;
+	u16 msglen = 0;
+	u16 read_len;
 	int ret;
+
+	if (q->max_read_len)
+		adapterlimit = q->max_read_len;
 
 	msgs[0].addr = bus_addr;
 	msgs[0].flags = 0;
@@ -289,14 +296,31 @@ static int sfp_i2c_read(struct sfp *sfp, bool a2, u8 dev_addr, void *buf,
 	msgs[0].buf = &dev_addr;
 	msgs[1].addr = bus_addr;
 	msgs[1].flags = I2C_M_RD;
-	msgs[1].len = len;
 	msgs[1].buf = buf;
 
-	ret = i2c_transfer(sfp->i2c, msgs, ARRAY_SIZE(msgs));
-	if (ret < 0)
-		return ret;
 
-	return ret == ARRAY_SIZE(msgs) ? len : 0;
+	while (len > 0) {
+		read_len = min_t(u16, len, adapterlimit);
+		msgs[1].len = read_len;
+
+		ret = i2c_transfer(sfp->i2c, msgs, ARRAY_SIZE(msgs));
+
+		if (ret != ARRAY_SIZE(msgs))
+			return ret;
+
+		/* Since len is unsigned, make doubly
+		 * sure we do not underflow it.
+		 */
+		if (read_len > len)
+			len = 0;
+		else
+			len -= read_len;
+		msgs[1].buf += read_len;
+		dev_addr += read_len;
+		msglen += read_len;
+	}
+
+	return msglen;
 }
 
 static int sfp_i2c_write(struct sfp *sfp, bool a2, u8 dev_addr, void *buf,
@@ -369,28 +393,7 @@ static void sfp_set_state(struct sfp *sfp, unsigned int state)
 
 static int sfp_read(struct sfp *sfp, bool a2, u8 addr, void *buf, size_t len)
 {
-	const struct i2c_adapter_quirks *q = sfp->i2c->quirks;
-	int ret;
-	size_t rx_bytes = 0;
-
-	/* Many i2c hw have limited rx buffers, split-up request when needed. */
-	while ((q->max_read_len) && (len > q->max_read_len)) {
-		ret = sfp->read(sfp, a2, addr, buf, q->max_read_len);
-		if (ret < 0)
-			return ret;
-		rx_bytes += ret;
-		addr += q->max_read_len;
-		buf += q->max_read_len;
-		len -= q->max_read_len;
-	}
-
-	ret = sfp->read(sfp, a2, addr, buf, len);
-	if (ret < 0)
-		return ret;
-
-	rx_bytes += ret;
-
-	return rx_bytes;
+	return sfp->read(sfp, a2, addr, buf, len);
 }
 
 static int sfp_write(struct sfp *sfp, bool a2, u8 addr, void *buf, size_t len)
