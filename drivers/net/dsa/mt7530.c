@@ -711,8 +711,30 @@ mt7530_port_enable(struct dsa_switch *ds, int port,
 		   struct phy_device *phy)
 {
 	struct mt7530_priv *priv = ds->priv;
+	int val;
 
 	mutex_lock(&priv->reg_mutex);
+
+	if (port == 5) {
+		/* Enable and setup Port 5; */
+		val = MHWTRAP_MANUAL | MHWTRAP_P5_MAC_SEL;
+		if (phy_interface_mode_is_rgmii( phy->interface ) )
+			val |= MHWTRAP_P5_RGMII_MODE;
+
+		mt7530_rmw(priv, MT7530_MHWTRAP,
+			   MHWTRAP_P5_RGMII_MODE | MHWTRAP_P5_DIS, val);
+
+		/* P5 RGMII TX Clock Control, delay 0 */
+		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x10));
+
+		/* P5 RGMII RX Clock Control: delay setting for 1000M */
+		val = CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2);
+		mt7530_write(priv, MT7530_P5RGMIIRXCR, val);
+
+		/* reduce P5 RGMII Tx driving, 8mA*/
+		val = P5_IO_CLK_DRV(1) | P5_IO_DATA_DRV(1);
+		mt7530_write(priv, MT7530_IO_DRV_CR, val);
+	}
 
 	/* Setup the MAC for the user port */
 	mt7530_write(priv, MT7530_PMCR_P(port), PMCR_USERP_LINK);
@@ -1286,7 +1308,7 @@ mt7530_setup(struct dsa_switch *ds)
 		     SYS_CTRL_PHY_RST | SYS_CTRL_SW_RST |
 		     SYS_CTRL_REG_RST);
 
-	/* Enable Port 6 only; P5 as GMAC5 which currently is not supported */
+	/* Enable Port 6 only; */
 	val = mt7530_read(priv, MT7530_MHWTRAP);
 	val &= ~MHWTRAP_P6_DIS & ~MHWTRAP_PHY_ACCESS;
 	val |= MHWTRAP_MANUAL;
