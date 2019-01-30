@@ -131,7 +131,7 @@
 		#size-cells = <0>;
 
 		mt7530: switch@0 {
-			compatible = "mediatek,mt7530";
+			compatible = "mediatek,mt7621";
 			#address-cells = <1>;
 			#size-cells = <0>;
 			reg = <0>;
