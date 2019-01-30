@@ -1,3 +1,4 @@
 dtb-$(CONFIG_DTB_GNUBEE1)      += gbpc1.dtb
+dtb-$(CONFIG_DTB_UBNT_ERX_SFP) += UBNT-ERX-SFP.dtb
 
 obj-y				+= $(patsubst %.dtb, %.dtb.o, $(dtb-y))
