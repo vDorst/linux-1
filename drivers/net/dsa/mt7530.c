@@ -446,7 +446,8 @@ mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 		break;
 	case PHY_INTERFACE_MODE_TRGMII:
 		trgint = 1;
-		ncpo1 = 0x1400;
+		/* PLL frequency: MT7621 150MHz, other 162.5MHz */
+		ncpo1 = (priv->id == ID_MT7621 ? 0x0780 : 0x1400);
 		ssc_delta = 0x57;
 		break;
 	default:
@@ -514,8 +515,10 @@ mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 		for (i = 0 ; i < NUM_TRGMII_CTRL; i++)
 			mt7530_rmw(priv, MT7530_TRGMII_RD(i),
 				   RD_TAP_MASK, RD_TAP(16));
-	else
-		mt7623_trgmii_set(priv, GSW_INTF_MODE, INTF_MODE_TRGMII);
+	else	
+		if (priv->id != ID_MT7621)
+			mt7623_trgmii_set(priv, GSW_INTF_MODE, 
+						INTF_MODE_TRGMII);
 
 	return 0;
 }
