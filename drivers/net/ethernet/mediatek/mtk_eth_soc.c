@@ -138,6 +138,24 @@ static int mtk_mdio_read(struct mii_bus *bus, int phy_addr, int phy_reg)
 	return _mtk_mdio_read(eth, phy_addr, phy_reg);
 }
 
+static void mt7621_gmac0_rgmii_adjust(struct mtk_eth *eth, int trgmii)
+{
+	u32 val;
+
+	/* Check DDR memory type. Currenly DDR2 is not supported. */
+	regmap_read(eth->ethsys, ETHSYS_SYSCFG, &val);
+	if ( val & SYSCFG_DRAM_TYPE_DDR2 ) {
+		dev_err(eth->dev,
+			"TRGMII mode with DDR2 memory not supported!\n");
+		val = 0;
+	} else {
+		val = (trgmii ? ETHSYS_TRGMII_MT7621_DDR_PLL : 0);
+	}
+
+	regmap_update_bits(eth->ethsys, ETHSYS_CLKCFG0,
+			   ETHSYS_TRGMII_MT7621_MASK, val);
+}
+
 static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth, int speed)
 {
 	u32 val;
@@ -231,6 +249,10 @@ static void mtk_phy_link_adjust(struct net_device *dev)
 	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII) &&
 	    !mac->id && !mac->trgmii)
 		mtk_gmac0_rgmii_adjust(mac->hw, dev->phydev->speed);
+
+	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII_MT7621) &&
+	    !mac->id)
+		mt7621_gmac0_rgmii_adjust(mac->hw, mac->trgmii);
 
 	if (dev->phydev->link)
 		mcr |= MAC_MCR_FORCE_LINK;
@@ -2635,9 +2657,9 @@ static const struct mtk_soc_data mt2701_data = {
 };
 
 static const struct mtk_soc_data mt7621_data = {
-	.caps = MTK_SHARED_INT,
-	.required_clks = MT7621_CLKS_BITMAP,
-	.required_pctl = false,
+        .caps = MTK_SHARED_INT | MTK_GMAC1_TRGMII_MT7621,
+        .required_clks = MT7621_CLKS_BITMAP,
+        .required_pctl = false,
 };
 
 static const struct mtk_soc_data mt7622_data = {

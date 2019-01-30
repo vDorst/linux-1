@@ -365,6 +365,10 @@
 #define MT7622_ETH		7622
 #define MT7621_ETH		7621
 
+/* ethernet system control register */
+#define	ETHSYS_SYSCFG		0x10
+#define	SYSCFG_DRAM_TYPE_DDR2	BIT(4)
+
 /* ethernet subsystem config register */
 #define ETHSYS_SYSCFG0		0x14
 #define SYSCFG0_GE_MASK		0x3
@@ -373,9 +377,14 @@
 #define SYSCFG0_SGMII_GMAC1	((2 << 8) & GENMASK(9, 8))
 #define SYSCFG0_SGMII_GMAC2	((3 << 8) & GENMASK(9, 8))
 
+#define	NUM_TRGMII_CTRL			5
+
 /* ethernet subsystem clock register */
 #define ETHSYS_CLKCFG0		0x2c
 #define ETHSYS_TRGMII_CLK_SEL362_5	BIT(11)
+#define ETHSYS_TRGMII_MT7621_MASK	(BIT(5) | BIT(6))
+#define ETHSYS_TRGMII_MT7621_APLL	BIT(6)
+#define ETHSYS_TRGMII_MT7621_DDR_PLL	BIT(5)
 
 /* ethernet reset control register */
 #define ETHSYS_RSTCTRL		0x34
@@ -570,6 +579,8 @@ struct mtk_rx_ring {
 #define MTK_DUAL_GMAC_SHARED_SGMII	(BIT(11) | MTK_GMAC1_SGMII | \
 					 MTK_GMAC2_SGMII)
 #define MTK_HWLRO			BIT(12)
+#define MTK_SHARED_INT			BIT(13)
+#define MTK_GMAC1_TRGMII_MT7621		BIT(14)
 #define MTK_HAS_CAPS(caps, _x)		(((caps) & (_x)) == (_x))
 
 /* struct mtk_eth_data -	This is the structure holding all differences
