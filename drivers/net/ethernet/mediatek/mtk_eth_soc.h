@@ -363,6 +363,7 @@
 #define ETHSYS_CHIPID4_7	0x4
 #define MT7623_ETH		7623
 #define MT7622_ETH		7622
+#define MT7621_ETH		7621
 
 /* ethernet subsystem config register */
 #define ETHSYS_SYSCFG0		0x14
@@ -488,6 +489,8 @@ enum mtk_clks_map {
 				 BIT(MTK_CLK_SGMII_CDR_FB) | \
 				 BIT(MTK_CLK_SGMII_CK) | \
 				 BIT(MTK_CLK_ETH2PLL))
+#define MT7621_CLKS_BITMAP	(0)
+
 enum mtk_dev_state {
 	MTK_HW_INIT,
 	MTK_RESETTING
