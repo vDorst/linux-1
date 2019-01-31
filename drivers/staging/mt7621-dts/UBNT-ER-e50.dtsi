@@ -126,6 +126,16 @@
 		};
 	};
 
+/*
+	gmac1: mac@1 {
+		compatible = "mediatek,eth-mac";
+		mtd-mac-address = <&factory 0x22>;
+		reg = <1>;
+		phy-mode = "rgmii";
+		phy-handle = <&ephy5>;
+	};
+*/
+
 	mdio: mdio-bus {
 		#address-cells = <1>;
 		#size-cells = <0>;
