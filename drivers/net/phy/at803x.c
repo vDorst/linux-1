@@ -11,7 +11,9 @@
  * option) any later version.
  */
 
+#include <linux/ethtool.h>
 #include <linux/phy.h>
+#include <linux/mdio.h>
 #include <linux/module.h>
 #include <linux/string.h>
 #include <linux/netdevice.h>
@@ -44,12 +46,23 @@
 #define AT803X_FUNC_DATA			0x4003
 #define AT803X_REG_CHIP_CONFIG			0x1f
 #define AT803X_BT_BX_REG_SEL			0x8000
+#define AT803X_SGMII_ANEG_EN			0x1000
+
+#define AT803X_PCS_SMART_EEE_CTRL3			0x805D
+#define AT803X_SMART_EEE_CTRL3_LPI_TX_DELAY_SEL_MASK	0x3
+#define AT803X_SMART_EEE_CTRL3_LPI_TX_DELAY_SEL_SHIFT	12
+#define AT803X_SMART_EEE_CTRL3_LPI_EN			BIT(8)
 
 #define AT803X_DEBUG_ADDR			0x1D
 #define AT803X_DEBUG_DATA			0x1E
 
 #define AT803X_MODE_CFG_MASK			0x0F
 #define AT803X_MODE_CFG_SGMII			0x01
+#define AT803X_MODE_CFG_BX1000_RGMII_50		0x02
+#define AT803X_MODE_CFG_BX1000_RGMII_75		0x03
+#define AT803X_MODE_FIBER			0x01
+#define AT803X_MODE_COPPER			0x00
+
 
 #define AT803X_PSSR			0x11	/*PHY-Specific Status Register*/
 #define AT803X_PSSR_MR_AN_COMPLETE	0x0200
@@ -69,6 +82,16 @@ MODULE_DESCRIPTION("Atheros 803x PHY driver");
 MODULE_AUTHOR("Matus Ujhelyi");
 MODULE_LICENSE("GPL");
 
+struct at803x_phy_hw_stat {
+	const char *string;
+	u8 reg;
+	u8 bits;
+};
+
+static struct at803x_phy_hw_stat at803x_hw_stats[] = {
+	{ "phy_idle_errors", 10, 8 },
+};
+
 struct at803x_priv {
 	bool phy_reset:1;
 };
@@ -81,6 +104,40 @@ struct at803x_context {
 	u16 smart_speed;
 	u16 led_control;
 };
+
+static int at803x_phy_get_sset_count(struct phy_device *phydev)
+{
+	return ARRAY_SIZE(at803x_hw_stats);
+}
+
+static void at803x_phy_get_strings(struct phy_device *phydev, u8 *data)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(at803x_hw_stats); i++)
+		memcpy(data + i * ETH_GSTRING_LEN,
+		       at803x_hw_stats[i].string, ETH_GSTRING_LEN);
+}
+
+static void at803x_phy_get_stats(struct phy_device *phydev,
+		       struct ethtool_stats *stats, u64 *data)
+{
+	unsigned int i;
+	int val;
+	struct at803x_phy_hw_stat stat;
+	u64 ret;
+
+	for (i = 0; i < ARRAY_SIZE(at803x_hw_stats); i++) {
+		stat = at803x_hw_stats[i];
+		val = phy_read(phydev, stat.reg);
+		if (val < 0) {
+			ret = U64_MAX;
+		} else {
+			ret = val & ((1 << stat.bits) - 1);
+		}
+		data[i] = ret;
+	}
+}
 
 static int at803x_debug_reg_read(struct phy_device *phydev, u16 reg)
 {
@@ -119,7 +176,21 @@ static inline int at803x_enable_rx_delay(struct phy_device *phydev)
 static inline int at803x_enable_tx_delay(struct phy_device *phydev)
 {
 	return at803x_debug_reg_mask(phydev, AT803X_DEBUG_REG_5, 0,
-					AT803X_DEBUG_TX_CLK_DLY_EN);
+				     AT803X_DEBUG_TX_CLK_DLY_EN);
+}
+
+static int at803x_disable_rx_delay(struct phy_device *phydev)
+{
+	pr_warn("at803x_disable_rx_delay\n");
+	return at803x_debug_reg_mask(phydev, AT803X_DEBUG_REG_0,
+				     AT803X_DEBUG_RX_CLK_DLY_EN, 0);
+}
+
+static int at803x_disable_tx_delay(struct phy_device *phydev)
+{
+	pr_warn("at803x_disable_tx_delay\n");
+	return at803x_debug_reg_mask(phydev, AT803X_DEBUG_REG_5,
+				     AT803X_DEBUG_TX_CLK_DLY_EN, 0);
 }
 
 /* save relevant PHY registers to private copy */
@@ -219,9 +290,9 @@ static int at803x_suspend(struct phy_device *phydev)
 	wol_enabled = value & AT803X_INTR_ENABLE_WOL;
 
 	if (wol_enabled)
-		value = BMCR_ISOLATE;
+		value |= BMCR_ISOLATE;
 	else
-		value = BMCR_PDOWN;
+		value |= BMCR_PDOWN;
 
 	phy_modify(phydev, MII_BMCR, 0, value);
 
@@ -247,9 +318,50 @@ static int at803x_probe(struct phy_device *phydev)
 	return 0;
 }
 
+static int at803x_mode(struct phy_device *phydev)
+{
+	int mode;
+
+	mode = phy_read(phydev, AT803X_REG_CHIP_CONFIG) & AT803X_MODE_CFG_MASK;
+
+	if (mode == AT803X_MODE_CFG_BX1000_RGMII_50 ||
+	    mode == AT803X_MODE_CFG_BX1000_RGMII_75)
+		return AT803X_MODE_FIBER;
+	return AT803X_MODE_COPPER;
+}
+
 static int at803x_config_init(struct phy_device *phydev)
 {
 	int ret;
+	u32 v;
+
+	if ( (phydev->drv->phy_id == ATH8031_PHY_ID &&
+		phydev->interface == PHY_INTERFACE_MODE_SGMII) ||
+		(at803x_mode(phydev) == AT803X_MODE_FIBER) )
+	{
+		//phydev->interface = PHY_INTERFACE_MODE_RGMII_RXID;
+
+		// pr_warn("at803x_config_init: FIBER: %s\n", phy_modes(phydev->interface));
+		v = phy_read(phydev, AT803X_REG_CHIP_CONFIG);
+		/* select SGMII/fiber page */
+
+		ret = phy_write(phydev, AT803X_REG_CHIP_CONFIG,
+						v & ~AT803X_BT_BX_REG_SEL);
+		if (ret)
+			return ret;
+
+		/* enable SGMII autonegotiation */
+		ret = phy_write(phydev, MII_BMCR, AT803X_SGMII_ANEG_EN);
+		if (ret)
+			return ret;
+
+		/* select copper page */
+		ret = phy_write(phydev, AT803X_REG_CHIP_CONFIG,
+						v | AT803X_BT_BX_REG_SEL);
+		if (ret)
+			return ret;
+
+	}
 
 	ret = genphy_config_init(phydev);
 	if (ret < 0)
@@ -336,11 +448,113 @@ static void at803x_link_change_notify(struct phy_device *phydev)
 	}
 }
 
+
+static int at803x_read_status(struct phy_device *phydev) {
+	int ccr, ret;
+	int pssr;
+	__ETHTOOL_DECLARE_LINK_MODE_MASK(supported) = { 0, };
+	u32 mask;
+
+	/* Handle (Fiber) SGMII to RGMII mode */
+	if (at803x_mode(phydev) == AT803X_MODE_FIBER) {
+
+		ccr = phy_read(phydev, AT803X_REG_CHIP_CONFIG);
+		/* select SGMII/fiber page */
+		ret = phy_write(phydev, AT803X_REG_CHIP_CONFIG,
+						ccr & ~AT803X_BT_BX_REG_SEL);
+		if (ret)
+			return ret;
+
+		/* check if the SGMII link is OK. */
+		pssr = phy_read(phydev, AT803X_PSSR);
+
+		//pr_warn("803x_read_status: %x\n", pssr);
+
+		if (pssr < 0)
+		    return pssr;
+
+		/* select Copper page */
+		ret = phy_write(phydev, AT803X_REG_CHIP_CONFIG,
+						ccr | AT803X_BT_BX_REG_SEL);
+		if (ret)
+			return ret;
+
+
+#define		PSSR_LINK      BIT(10)
+#define		PSSR_SYNC_STATUS      BIT(8)
+
+		phydev->link = 0;
+
+		if ((pssr & PSSR_SYNC_STATUS) && (pssr & PSSR_LINK))
+			phydev->link = 1;
+
+		phydev->speed = SPEED_1000;
+		phydev->duplex = DUPLEX_FULL;
+
+		__set_bit(ETHTOOL_LINK_MODE_Pause_BIT, supported);
+		__set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, supported);
+		__set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, supported);
+		__set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, supported);
+		__set_bit(ETHTOOL_LINK_MODE_FIBRE_BIT, supported);
+		__set_bit(ETHTOOL_LINK_MODE_MII_BIT, supported);
+
+		if (!ethtool_convert_link_mode_to_legacy_u32(&mask, supported))
+			phydev_warn(phydev,
+				    "PHY supports (%*pb) more modes than phylib supports, some modes not supported.\n",
+				    __ETHTOOL_LINK_MODE_MASK_NBITS, supported);
+
+		linkmode_copy(phydev->supported, supported);
+		linkmode_copy(phydev->advertising, supported);
+//		linkmode_and(phydev->advertising, phydev->advertising,
+//			     phydev->supported);
+
+		phy_support_asym_pause(phydev);
+		return 0;
+	}
+
+	return genphy_read_status(phydev);
+}
+
+static int at803x_config_aneg(struct phy_device *phydev)
+{
+	pr_warn("at803x_config_aneg: enter\n");
+	// return 0;
+	return genphy_config_aneg(phydev);
+}
+
 static int at803x_aneg_done(struct phy_device *phydev)
 {
-	int ccr;
+	int ccr, ret;
+	int aneg_done;
 
-	int aneg_done = genphy_aneg_done(phydev);
+	pr_warn("803x_aneg_done: enter\n");
+
+	if (at803x_mode(phydev) == AT803X_MODE_FIBER) {
+
+		aneg_done = BMSR_ANEGCOMPLETE;
+
+		ccr = phy_read(phydev, AT803X_REG_CHIP_CONFIG);
+		/* select SGMII/fiber page */
+		ret = phy_write(phydev, AT803X_REG_CHIP_CONFIG,
+						ccr & ~AT803X_BT_BX_REG_SEL);
+		if (ret)
+			return ret;
+		/* check if the SGMII link is OK. */
+		if (!(phy_read(phydev, AT803X_PSSR) & AT803X_PSSR_MR_AN_COMPLETE)) {
+			pr_warn("803x_aneg_done: SGMII link is not ok\n");
+			aneg_done = 0;
+		}
+
+		/* select Copper page */
+		ret = phy_write(phydev, AT803X_REG_CHIP_CONFIG,
+						ccr | AT803X_BT_BX_REG_SEL);
+		if (ret)
+			return ret;
+
+		return aneg_done;
+	}
+
+	aneg_done = genphy_aneg_done(phydev);
 	if (aneg_done != BMSR_ANEGCOMPLETE)
 		return aneg_done;
 
@@ -407,10 +621,16 @@ static struct phy_driver at803x_driver[] = {
 	.get_wol		= at803x_get_wol,
 	.suspend		= at803x_suspend,
 	.resume			= at803x_resume,
-	.features		= PHY_GBIT_FEATURES,
+	.features		= PHY_GBIT_FIBRE_FEATURES,
+	.config_aneg		= at803x_config_aneg,
+	.read_status		= at803x_read_status,
 	.aneg_done		= at803x_aneg_done,
-	.ack_interrupt		= &at803x_ack_interrupt,
-	.config_intr		= &at803x_config_intr,
+	.ack_interrupt		= at803x_ack_interrupt,
+	.config_intr		= at803x_config_intr,
+	.set_loopback		= genphy_loopback,
+	.get_sset_count		= at803x_phy_get_sset_count,
+	.get_strings		= at803x_phy_get_strings,
+	.get_stats		= at803x_phy_get_stats,
 } };
 
 module_phy_driver(at803x_driver);
