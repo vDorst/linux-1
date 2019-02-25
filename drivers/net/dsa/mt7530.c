@@ -22,11 +22,15 @@
 #include <linux/of_net.h>
 #include <linux/of_platform.h>
 #include <linux/phy.h>
+#include <linux/phy_fixed.h>
+#include <linux/phylink.h>
+#include <linux/mii.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/reset.h>
 #include <linux/gpio/consumer.h>
 #include <net/dsa.h>
+
 
 #include "mt7530.h"
 
@@ -711,30 +715,8 @@ mt7530_port_enable(struct dsa_switch *ds, int port,
 		   struct phy_device *phy)
 {
 	struct mt7530_priv *priv = ds->priv;
-	int val;
 
 	mutex_lock(&priv->reg_mutex);
-
-	if (port == 5) {
-		/* Enable and setup Port 5; */
-		val = MHWTRAP_MANUAL | MHWTRAP_P5_MAC_SEL;
-		if (phy_interface_mode_is_rgmii( phy->interface ) )
-			val |= MHWTRAP_P5_RGMII_MODE;
-
-		mt7530_rmw(priv, MT7530_MHWTRAP,
-			   MHWTRAP_P5_RGMII_MODE | MHWTRAP_P5_DIS, val);
-
-		/* P5 RGMII TX Clock Control, delay 0 */
-		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x10));
-
-		/* P5 RGMII RX Clock Control: delay setting for 1000M */
-		val = CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2);
-		mt7530_write(priv, MT7530_P5RGMIIRXCR, val);
-
-		/* reduce P5 RGMII Tx driving, 8mA*/
-		val = P5_IO_CLK_DRV(1) | P5_IO_DATA_DRV(1);
-		mt7530_write(priv, MT7530_IO_DRV_CR, val);
-	}
 
 	/* Setup the MAC for the user port */
 	mt7530_write(priv, MT7530_PMCR_P(port), PMCR_USERP_LINK);
@@ -1338,6 +1320,213 @@ mt7530_setup(struct dsa_switch *ds)
 	return 0;
 }
 
+static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
+				  unsigned int mode,
+				  const struct phylink_link_state *state)
+{
+	struct mt7530_priv *priv = ds->priv;
+	u32 mcr = PMCR_USERP_LINK | PMCR_FORCE_MODE;
+	u32 val;
+
+	pr_warn("mt7530_phylink_mac_config port: %d, mode: %x, %s\n", port, mode, phy_modes(state->interface));
+
+//	if ((mode == MLO_AN_PHY) && (port < 5))
+//		return;
+
+	switch (port) {
+	case 0: /* Internal phy */
+	case 1:
+	case 2:
+	case 3:
+	case 4:
+		if (state->interface != PHY_INTERFACE_MODE_INTERNAL)
+			goto unsupported;
+		break;
+	case 5: /* 2nd cpu port with phy of port 0 or 4 / external phy */
+		if (!phy_interface_mode_is_rgmii(state->interface) &&
+		    state->interface != PHY_INTERFACE_MODE_MII &&
+		    state->interface != PHY_INTERFACE_MODE_NA &&
+		    state->interface != PHY_INTERFACE_MODE_1000BASEX &&
+		    state->interface != PHY_INTERFACE_MODE_SGMII )
+			goto unsupported;
+		break;
+	case 6: /* 1e cpu port */
+		if (!phy_interface_mode_is_rgmii(state->interface) &&
+		    state->interface != PHY_INTERFACE_MODE_TRGMII)
+			goto unsupported;
+		break;
+	default:
+		dev_err(ds->dev, "Unsupported port: %i\n", port);
+		return;
+	}
+
+	if (port == 5 && state->interface != PHY_INTERFACE_MODE_SGMII) {
+		mutex_lock(&priv->reg_mutex);
+
+		/* Enable and setup Port 5; */
+		val = MHWTRAP_MANUAL | MHWTRAP_P5_MAC_SEL;
+		if (phy_interface_mode_is_rgmii( state->interface ) )
+			val |= MHWTRAP_P5_RGMII_MODE;
+
+		mt7530_rmw(priv, MT7530_MHWTRAP,
+			   MHWTRAP_P5_RGMII_MODE | MHWTRAP_P5_DIS, val);
+
+		/* P5 RGMII TX Clock Control, delay 0 */
+		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x10));
+
+		/* P5 RGMII RX Clock Control: delay setting for 1000M */
+		val = CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2);
+		mt7530_write(priv, MT7530_P5RGMIIRXCR, val);
+
+		/* reduce P5 RGMII Tx driving, 8mA*/
+		val = P5_IO_CLK_DRV(1) | P5_IO_DATA_DRV(1);
+		mt7530_write(priv, MT7530_IO_DRV_CR, val);
+
+		mutex_unlock(&priv->reg_mutex);
+	}
+
+	switch (state->speed) {
+	case SPEED_1000:
+		pr_warn("Speed 1000\n");
+		mcr |= PMCR_FORCE_SPEED_1000;
+		break;
+	case SPEED_100:
+		pr_warn("Speed 100\n");
+		mcr |= PMCR_FORCE_SPEED_100;
+		break;
+	default:
+		mcr |= PMCR_FORCE_SPEED_1000;
+		break;
+	};
+
+	if ((state->link) || (mode == MLO_AN_FIXED))
+		mcr |= PMCR_FORCE_LNK;
+
+	if (state->duplex) {
+		pr_warn("Duplex Full\n");
+		mcr |= PMCR_FORCE_FDX;
+	}
+
+	if (!!phylink_test(state->advertising, Pause))
+		mcr |= PMCR_TX_FC_EN | PMCR_RX_FC_EN;
+
+	mt7530_write(priv, MT7530_PMCR_P(port), mcr);
+
+	return;
+
+unsupported:
+	dev_err(ds->dev, "Unsupported interface: %d\n", state->interface);
+	return;
+}
+
+static void mt7530_phylink_fixed_state(struct dsa_switch *ds, int port,
+				   struct phylink_link_state *status)
+{
+	pr_warn("mt7530_phylink_fixed_state port: %d, %s\n", port, phy_modes(status->interface));
+
+	status->link = true;
+}
+
+static void mt7530_phylink_mac_link_down(struct dsa_switch *ds, int port,
+				     unsigned int mode,
+				     phy_interface_t interface)
+{
+	struct mt7530_priv *priv = ds->priv;
+	pr_warn("mt7530_phylink_mac_link_down port: %d, mode: %x, %s\n", port, mode, phy_modes(interface));
+	mt7530_write(priv, MT7530_PMCR_P(port), 0);
+}
+
+static void mt7530_phylink_mac_link_up(struct dsa_switch *ds, int port,
+				   unsigned int mode,
+				   phy_interface_t interface,
+				   struct phy_device *phydev)
+{
+	struct mt7530_priv *priv = ds->priv;
+	u32 val = PMCR_USERP_LINK;
+
+	pr_warn("mt7530_phylink_mac_link_up port: %d, mode: %x, %s\n", port, mode, phy_modes(interface));
+	if (port == 6) 
+		val = PMCR_CPUP_LINK;
+
+	mt7530_write(priv, MT7530_PMCR_P(port), val);
+}
+
+static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
+				unsigned long *supported,
+				struct phylink_link_state *state)
+{
+	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
+
+	pr_warn("mt7530_phylink_validate: P%d: [%i](%s)\n", port, state->interface, phy_modes(state->interface));
+
+	switch (port) {
+	case 0: /* Internal phy */
+	case 1:
+	case 2:
+	case 3:
+	case 4:
+		if (state->interface != PHY_INTERFACE_MODE_INTERNAL)
+			goto unsupported;
+		break;
+	case 5: /* 2nd cpu port with phy of port 0 or 4 / external phy */
+		if (!phy_interface_mode_is_rgmii(state->interface) &&
+		    state->interface != PHY_INTERFACE_MODE_MII && 
+		    state->interface != PHY_INTERFACE_MODE_SGMII && /* Lei about it for a test */
+		    state->interface != PHY_INTERFACE_MODE_1000BASEX && /* Lei about it for a test */
+		    state->interface != PHY_INTERFACE_MODE_NA)
+			goto unsupported;
+		break;
+	case 6: /* 1e cpu port */
+		if (!phy_interface_mode_is_rgmii(state->interface) &&
+		    state->interface != PHY_INTERFACE_MODE_TRGMII)
+			goto unsupported;
+		break;
+	default:
+		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
+		dev_err(ds->dev, "Unsupported port: %i\n", port);
+		return;
+	}
+
+	/* Allow all the expected bits */
+	phylink_set(mask, Autoneg);
+	phylink_set(mask, Pause);
+	phylink_set(mask, Asym_Pause);
+	phylink_set(mask, MII);
+
+	/* With the exclusion of MII and Reverse MII, we support Gigabit,
+	 * including Half duplex
+	 */
+	if (state->interface != PHY_INTERFACE_MODE_MII) {
+		phylink_set(mask, 1000baseT_Full);
+		phylink_set(mask, 1000baseT_Half);
+	}
+
+	phylink_set(mask, 10baseT_Half);
+	phylink_set(mask, 10baseT_Full);
+	phylink_set(mask, 100baseT_Half);
+	phylink_set(mask, 100baseT_Full);
+
+	if ((port == 5) && 
+		( (state->interface == PHY_INTERFACE_MODE_NA) || 
+		(state->interface == PHY_INTERFACE_MODE_SGMII) || 
+		(state->interface == PHY_INTERFACE_MODE_1000BASEX) )){
+		phylink_set(mask, FIBRE);
+		phylink_set(mask, 1000baseX_Full);
+		phylink_set(mask, 1000baseT_Full);
+	}
+
+	bitmap_and(supported, supported, mask,
+		   __ETHTOOL_LINK_MODE_MASK_NBITS);
+	bitmap_and(state->advertising, state->advertising, mask,
+		   __ETHTOOL_LINK_MODE_MASK_NBITS);
+	return;
+
+unsupported:
+	bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
+	dev_err(ds->dev, "Unsupported interface: %d\n", state->interface);
+	return;
+}
+
 static const struct dsa_switch_ops mt7530_switch_ops = {
 	.get_tag_protocol	= mtk_get_tag_protocol,
 	.setup			= mt7530_setup,
@@ -1346,7 +1535,7 @@ static const struct dsa_switch_ops mt7530_switch_ops = {
 	.phy_write		= mt7530_phy_write,
 	.get_ethtool_stats	= mt7530_get_ethtool_stats,
 	.get_sset_count		= mt7530_get_sset_count,
-	.adjust_link		= mt7530_adjust_link,
+	// .adjust_link		= mt7530_adjust_link,
 	.port_enable		= mt7530_port_enable,
 	.port_disable		= mt7530_port_disable,
 	.port_stp_state_set	= mt7530_stp_state_set,
@@ -1359,6 +1548,11 @@ static const struct dsa_switch_ops mt7530_switch_ops = {
 	.port_vlan_prepare	= mt7530_port_vlan_prepare,
 	.port_vlan_add		= mt7530_port_vlan_add,
 	.port_vlan_del		= mt7530_port_vlan_del,
+	.phylink_validate	= mt7530_phylink_validate,
+	.phylink_mac_config	= mt7530_phylink_mac_config,
+	.phylink_mac_link_down	= mt7530_phylink_mac_link_down,
+	.phylink_mac_link_up	= mt7530_phylink_mac_link_up,
+	.phylink_fixed_state	= mt7530_phylink_fixed_state,
 };
 
 static const struct of_device_id mt7530_of_match[] = {

@@ -24,6 +24,7 @@
 #include <linux/tcp.h>
 #include <linux/interrupt.h>
 #include <linux/pinctrl/devinfo.h>
+#include <linux/phylink.h>
 
 #include "mtk_eth_soc.h"
 
@@ -280,33 +281,156 @@ static void mtk_phy_link_adjust(struct net_device *dev)
 
 	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
 
+
 	if (!of_phy_is_fixed_link(mac->of_node))
 		phy_print_status(dev->phydev);
+
 }
+
+
+static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
+			   const struct phylink_link_state *state)
+{
+	struct mtk_mac *mac = netdev_priv(ndev);
+	u16 lcl_adv = 0, rmt_adv = 0;
+	u8 flowctrl;
+	u32 mcr = MAC_MCR_MAX_RX_1536 | MAC_MCR_IPG_CFG |
+		  MAC_MCR_FORCE_MODE | MAC_MCR_TX_EN |
+		  MAC_MCR_RX_EN | MAC_MCR_BACKOFF_EN |
+		  MAC_MCR_BACKPR_EN;
+	
+	// pr_warn("mtk_mac_config: GM%d: M%d: [%i](%s)\n", mac->id, mode, state->interface, phy_modes(state->interface));
+
+	switch (state->speed) {
+	case SPEED_1000:
+		mcr |= MAC_MCR_SPEED_1000;
+		break;
+	case SPEED_100:
+		mcr |= MAC_MCR_SPEED_100;
+		break;
+	};
+
+	if ((state->link) || (mode == MLO_AN_FIXED))
+		mcr |= MAC_MCR_FORCE_LINK;
+
+	if (state->duplex) 
+		mcr |= MAC_MCR_FORCE_DPX;
+
+	if (!!phylink_test(state->advertising, Pause))
+		mcr |= MAC_MCR_FORCE_TX_FC | MAC_MCR_FORCE_RX_FC;
+
+	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
+
+	return;
+}
+
+static int mtk_mac_link_state(struct net_device *ndev,
+			      struct phylink_link_state *state)
+{
+	pr_warn("mtk_mac_link_state %d\n", state->link);
+	return state->link;
+}
+
+static void mtk_mac_an_restart(struct net_device *ndev)
+{
+	pr_warn("mtk_mac_an_restart\n");
+}
+
+static void mtk_mac_link_down(struct net_device *ndev, unsigned int mode,
+			      phy_interface_t interface)
+{
+	pr_warn("mtk_mac_link_down: mode %d\n", mode);
+}
+
+static void mtk_mac_link_up(struct net_device *ndev, unsigned int mode,
+			    phy_interface_t interface,
+			    struct phy_device *phy)
+{
+	pr_warn("mtk_mac_link_down: up %d\n", mode);
+}
+
+static void mtk_validate(struct net_device *ndev, unsigned long *supported,
+			    struct phylink_link_state *state)
+{
+	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
+
+	pr_warn("mtk_validate: %s\n", phy_modes(state->interface));
+
+	/* We only support QSGMII, SGMII, 802.3z and RGMII modes */
+	if (state->interface != PHY_INTERFACE_MODE_NA &&
+	    state->interface != PHY_INTERFACE_MODE_TRGMII &&
+	    !phy_interface_mode_is_rgmii(state->interface)) {
+		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
+		return;
+	}
+
+	/* Allow all the expected bits */
+	phylink_set(mask, Autoneg);
+	phylink_set_port_modes(mask);
+
+	/* Asymmetric pause is unsupported */
+	phylink_set(mask, Pause);
+
+	/* Half-duplex at speeds higher than 100Mbit is unsupported */
+	phylink_set(mask, 1000baseT_Full);
+	phylink_set(mask, 1000baseX_Full);
+
+	if (!phy_interface_mode_is_8023z(state->interface)) {
+		/* 10M and 100M are only supported in non-802.3z mode */
+		phylink_set(mask, 10baseT_Half);
+		phylink_set(mask, 10baseT_Full);
+		phylink_set(mask, 100baseT_Half);
+		phylink_set(mask, 100baseT_Full);
+	}
+
+	bitmap_and(supported, supported, mask,
+		   __ETHTOOL_LINK_MODE_MASK_NBITS);
+	bitmap_and(state->advertising, state->advertising, mask,
+		   __ETHTOOL_LINK_MODE_MASK_NBITS);
+}
+
+static const struct phylink_mac_ops mtk_phylink_ops = {
+	.validate = mtk_validate,
+	.mac_link_state = mtk_mac_link_state,
+	.mac_an_restart = mtk_mac_an_restart,
+	.mac_config = mtk_mac_config,
+	.mac_link_down = mtk_mac_link_down,
+	.mac_link_up = mtk_mac_link_up,
+};
 
 static int mtk_phy_connect_node(struct mtk_eth *eth, struct mtk_mac *mac,
 				struct device_node *phy_node)
 {
-	struct phy_device *phydev;
-	int phy_mode;
+	int phy_mode, err;
 
 	phy_mode = of_get_phy_mode(phy_node);
 	if (phy_mode < 0) {
-		dev_err(eth->dev, "incorrect phy-mode %d\n", phy_mode);
+		dev_err(mac->hw->dev, "incorrect phy-mode %d\n", phy_mode);
 		return -EINVAL;
 	}
 
-	phydev = of_phy_connect(eth->netdev[mac->id], phy_node,
-				mtk_phy_link_adjust, 0, phy_mode);
-	if (!phydev) {
-		dev_err(eth->dev, "could not connect to PHY\n");
-		return -ENODEV;
+	dev_err(mac->hw->dev, "mtk_phy_connect_node\n");
+
+	mac->phylink = phylink_create(eth->netdev[mac->id], &phy_node->fwnode, phy_mode,
+				 &mtk_phylink_ops);
+
+	if (IS_ERR_OR_NULL(mac->phylink)) {
+		dev_err(mac->hw->dev, "phylink err %li\n", PTR_ERR(mac->phylink));
+		return PTR_ERR(mac->phylink);
 	}
 
+	err = phylink_of_phy_connect(mac->phylink, phy_node, 0);
+	if (err) {
+		dev_err(mac->hw->dev, "could not connect to PHY: %d\n", err);
+		return err;
+	}
+
+/*
 	dev_info(eth->dev,
 		 "connected mac %d to PHY at %s [uid=%08x, driver=%s]\n",
-		 mac->id, phydev_name(phydev), phydev->phy_id,
-		 phydev->drv->name);
+		 mac->id, phydev_name(mac->phylink->phydev), mac->phylink->phydev->phy_id,
+		 mac->phylink->phydev->drv->name);
+*/
 
 	return 0;
 }
@@ -1843,7 +1967,7 @@ static int mtk_open(struct net_device *dev)
 	else
 		refcount_inc(&eth->dma_refcnt);
 
-	phy_start(dev->phydev);
+	phylink_start(mac->phylink);
 	netif_start_queue(dev);
 
 	return 0;
@@ -1878,7 +2002,7 @@ static int mtk_stop(struct net_device *dev)
 	struct mtk_eth *eth = mac->hw;
 
 	netif_tx_disable(dev);
-	phy_stop(dev->phydev);
+	phylink_stop(mac->phylink);
 
 	/* only shutdown DMA if this is the last user */
 	if (!refcount_dec_and_test(&eth->dma_refcnt))
