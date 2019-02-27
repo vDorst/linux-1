@@ -125,13 +125,12 @@
 			pause;
 		};
 	};
-
 /*
 	gmac1: mac@1 {
 		compatible = "mediatek,eth-mac";
 		mtd-mac-address = <&factory 0x22>;
 		reg = <1>;
-		phy-mode = "rgmii";
+		phy-mode = "rgmii-id";
 		phy-handle = <&ephy5>;
 	};
 */
@@ -160,26 +159,31 @@
 				port@0 {
 					reg = <0>;
 					label = "lan0";
+					phy-mode = "internal";
 				};
 		
 				port@1 {
 					reg = <1>;
 					label = "lan1";
+					phy-mode = "internal";
 				};
 		
 				port@2 {
 					reg = <2>;
 					label = "lan2";
+					phy-mode = "internal";
 				};
 		
 				port@3 {
 					reg = <3>;
 					label = "lan3";
+					phy-mode = "internal";
 				};
 		
 				port@4 {
 					reg = <4>;
 					label = "lan4";
+					phy-mode = "internal";
 				};
 		
 				cpu_port0: port@6 {
@@ -191,6 +195,7 @@
 					fixed-link {
 						speed = <1000>;
 						full-duplex;
+						pause;
 					};
 				};
 			};
