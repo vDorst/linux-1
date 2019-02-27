@@ -292,8 +292,6 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 			   const struct phylink_link_state *state)
 {
 	struct mtk_mac *mac = netdev_priv(ndev);
-	u16 lcl_adv = 0, rmt_adv = 0;
-	u8 flowctrl;
 	u32 mcr = MAC_MCR_MAX_RX_1536 | MAC_MCR_IPG_CFG |
 		  MAC_MCR_FORCE_MODE | MAC_MCR_TX_EN |
 		  MAC_MCR_RX_EN | MAC_MCR_BACKOFF_EN |
@@ -328,7 +326,7 @@ static int mtk_mac_link_state(struct net_device *ndev,
 			      struct phylink_link_state *state)
 {
 	pr_warn("mtk_mac_link_state %d\n", state->link);
-	return state->link;
+	return 1;
 }
 
 static void mtk_mac_an_restart(struct net_device *ndev)
@@ -346,7 +344,7 @@ static void mtk_mac_link_up(struct net_device *ndev, unsigned int mode,
 			    phy_interface_t interface,
 			    struct phy_device *phy)
 {
-	pr_warn("mtk_mac_link_down: up %d\n", mode);
+	pr_warn("mtk_mac_link_up: mode %d\n", mode);
 }
 
 static void mtk_validate(struct net_device *ndev, unsigned long *supported,
@@ -398,57 +396,14 @@ static const struct phylink_mac_ops mtk_phylink_ops = {
 	.mac_link_up = mtk_mac_link_up,
 };
 
-static int mtk_phy_connect_node(struct mtk_eth *eth, struct mtk_mac *mac,
-				struct device_node *phy_node)
-{
-	int phy_mode, err;
-
-	phy_mode = of_get_phy_mode(phy_node);
-	if (phy_mode < 0) {
-		dev_err(mac->hw->dev, "incorrect phy-mode %d\n", phy_mode);
-		return -EINVAL;
-	}
-
-	dev_err(mac->hw->dev, "mtk_phy_connect_node\n");
-
-	mac->phylink = phylink_create(eth->netdev[mac->id], &phy_node->fwnode, phy_mode,
-				 &mtk_phylink_ops);
-
-	if (IS_ERR_OR_NULL(mac->phylink)) {
-		dev_err(mac->hw->dev, "phylink err %li\n", PTR_ERR(mac->phylink));
-		return PTR_ERR(mac->phylink);
-	}
-
-	err = phylink_of_phy_connect(mac->phylink, phy_node, 0);
-	if (err) {
-		dev_err(mac->hw->dev, "could not connect to PHY: %d\n", err);
-		return err;
-	}
-
-/*
-	dev_info(eth->dev,
-		 "connected mac %d to PHY at %s [uid=%08x, driver=%s]\n",
-		 mac->id, phydev_name(mac->phylink->phydev), mac->phylink->phydev->phy_id,
-		 mac->phylink->phydev->drv->name);
-*/
-
-	return 0;
-}
-
 static int mtk_phy_connect(struct net_device *dev)
 {
 	struct mtk_mac *mac = netdev_priv(dev);
 	struct mtk_eth *eth;
-	struct device_node *np;
+	struct device_node *np = mac->of_node;
 	u32 val;
 
 	eth = mac->hw;
-	np = of_parse_phandle(mac->of_node, "phy-handle", 0);
-	if (!np && of_phy_is_fixed_link(mac->of_node))
-		if (!of_phy_register_fixed_link(mac->of_node))
-			np = of_node_get(mac->of_node);
-	if (!np)
-		return -ENODEV;
 
 	mac->ge_mode = 0;
 	switch (of_get_phy_mode(np)) {
@@ -484,17 +439,11 @@ static int mtk_phy_connect(struct net_device *dev)
 	val |= SYSCFG0_GE_MODE(mac->ge_mode, mac->id);
 	regmap_write(eth->ethsys, ETHSYS_SYSCFG0, val);
 
-	/* couple phydev to net_device */
-	if (mtk_phy_connect_node(eth, mac, np))
-		goto err_phy;
-
 	of_node_put(np);
 
 	return 0;
 
 err_phy:
-	if (of_phy_is_fixed_link(mac->of_node))
-		of_phy_deregister_fixed_link(mac->of_node);
 	of_node_put(np);
 	dev_err(eth->dev, "%s: invalid phy\n", __func__);
 	return -EINVAL;
@@ -1950,6 +1899,20 @@ static int mtk_open(struct net_device *dev)
 {
 	struct mtk_mac *mac = netdev_priv(dev);
 	struct mtk_eth *eth = mac->hw;
+	struct fwnode_handle *fixed_node;
+
+	fixed_node = fwnode_get_named_child_node(eth->dev->fwnode, "fixed-link");
+	if (fixed_node)
+		netdev_err(dev, "eth->dev->fwnode\n");
+
+	int err = phylink_of_phy_connect(mac->phylink, mac->of_node, 0);
+
+	netdev_err(dev, "mtk_open: %d\n", err);
+
+	if (err) {
+		netdev_err(dev, "mtk_open: could not attach PHY: %d\n", err);
+		return err;
+	}
 
 	/* we run 2 netdevs on the same dma ring so we only bring it up once */
 	if (!refcount_read(&eth->dma_refcnt)) {
@@ -2192,19 +2155,19 @@ static void mtk_uninit(struct net_device *dev)
 	struct mtk_eth *eth = mac->hw;
 
 	phy_disconnect(dev->phydev);
-	if (of_phy_is_fixed_link(mac->of_node))
-		of_phy_deregister_fixed_link(mac->of_node);
 	mtk_tx_irq_disable(eth, ~0);
 	mtk_rx_irq_disable(eth, ~0);
 }
 
 static int mtk_do_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 {
+	struct mtk_mac *mac = netdev_priv(dev);
+
 	switch (cmd) {
 	case SIOCGMIIPHY:
 	case SIOCGMIIREG:
 	case SIOCSMIIREG:
-		return phy_mii_ioctl(dev->phydev, ifr, cmd);
+		return phylink_mii_ioctl(mac->phylink, ifr, cmd);
 	default:
 		break;
 	}
@@ -2527,9 +2490,10 @@ static const struct net_device_ops mtk_netdev_ops = {
 
 static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 {
+	struct phylink *phylink;
 	struct mtk_mac *mac;
 	const __be32 *_id = of_get_property(np, "reg", NULL);
-	int id, err;
+	int phy_mode, id, err;
 
 	if (!_id) {
 		dev_err(eth->dev, "missing mac id\n");
@@ -2573,6 +2537,24 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	u64_stats_init(&mac->hw_stats->syncp);
 	mac->hw_stats->reg_offset = id * MTK_STAT_OFFSET;
 
+	/* phylink create */
+	phy_mode = of_get_phy_mode(np);
+	if (phy_mode < 0) {
+		dev_err(eth->dev, "incorrect phy-mode\n");
+		err = -EINVAL;
+		goto free_netdev;
+	}
+
+	phylink = phylink_create(eth->netdev[id], of_fwnode_handle(mac->of_node),
+				 phy_mode, &mtk_phylink_ops);
+	if (IS_ERR(phylink)) {
+		err = PTR_ERR(phylink);
+		goto free_netdev;
+	}
+
+	mac->phylink = phylink;
+	dev_err(eth->dev, "phymode: %s\n", phy_modes(phy_mode));
+
 	SET_NETDEV_DEV(eth->netdev[id], eth->dev);
 	eth->netdev[id]->watchdog_timeo = 5 * HZ;
 	eth->netdev[id]->netdev_ops = &mtk_netdev_ops;
@@ -2589,6 +2571,7 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 
 	eth->netdev[id]->irq = eth->irq[0];
 	eth->netdev[id]->dev.of_node = np;
+
 
 	return 0;
 
@@ -2755,6 +2738,7 @@ err_deinit_hw:
 static int mtk_remove(struct platform_device *pdev)
 {
 	struct mtk_eth *eth = platform_get_drvdata(pdev);
+	struct mtk_mac *mac;
 	int i;
 
 	/* stop all devices to make sure that dma is properly shut down */
@@ -2762,6 +2746,8 @@ static int mtk_remove(struct platform_device *pdev)
 		if (!eth->netdev[i])
 			continue;
 		mtk_stop(eth->netdev[i]);
+		mac = netdev_priv(eth->netdev[i]);
+		phylink_disconnect_phy(mac->phylink);
 	}
 
 	mtk_hw_deinit(eth);
@@ -2769,6 +2755,7 @@ static int mtk_remove(struct platform_device *pdev)
 	netif_napi_del(&eth->tx_napi);
 	netif_napi_del(&eth->rx_napi);
 	mtk_cleanup(eth);
+	
 	mtk_mdio_cleanup(eth);
 
 	return 0;
