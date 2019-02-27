@@ -62,13 +62,6 @@
 	};
 };
 
-&mdio {
-	ephy5: ethernet-phy@7 {
-		reg = <7>;
-		phy-mode = "rgmii-rxid";
-	};
-};
-
 &i2c {
 	status = "okay";
 
@@ -101,22 +94,21 @@
 	};
 };
 
+&mdio {
+	ephy5: ethernet-phy@7 {
+		reg = <7>;
+		sfp = <&sfp_lan5>;
+	};
+};
+
 &mt7530 {
 	ports {
 		lan5: port@5 {
 			reg = <5>;
 			label = "lan5";
 			phy-handle = <&ephy5>;
-			/* AT803x add by default a delay to RX clock.
-			 * Just ensure it is enabled.
-			 */
 			phy-mode = "rgmii-rxid";
 		};
 	};
-};
-
-&lan5 {
-	managed = "auto";
-	sfp = <&sfp_lan5>;
 };
 
