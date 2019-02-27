@@ -97,7 +97,7 @@
 &mdio {
 	ephy5: ethernet-phy@7 {
 		reg = <7>;
-		sfp = <&sfp_lan5>;
+		//sfp = <&sfp_lan5>;
 	};
 };
 
