@@ -280,11 +280,6 @@ static void mtk_phy_link_adjust(struct net_device *dev)
 	}
 
 	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
-
-
-	if (!of_phy_is_fixed_link(mac->of_node))
-		phy_print_status(dev->phydev);
-
 }
 
 
