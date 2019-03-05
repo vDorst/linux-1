@@ -428,6 +428,7 @@ struct mt7530_port {
  * @ports:		Holding the state among ports
  * @reg_mutex:		The lock for protecting among process accessing
  *			registers
+ * @p5_interface:	PORT 5 interface status NULL = Not set.
  */
 struct mt7530_priv {
 	struct device		*dev;
@@ -440,6 +441,7 @@ struct mt7530_priv {
 	struct gpio_desc	*reset;
 	unsigned int		id;
 	bool			mcm;
+	phy_interface_t		p5_interface;
 
 	struct mt7530_port	ports[MT7530_NUM_PORTS];
 	/* protect among processes for registers access*/

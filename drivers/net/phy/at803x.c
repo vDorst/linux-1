@@ -18,13 +18,8 @@
 #include <linux/string.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
-#include <linux/of_net.h>
 #include <linux/of_gpio.h>
 #include <linux/gpio/consumer.h>
-#include <linux/of_mdio.h>
-#include <linux/property.h>
-#include <linux/sfp.h>
-#include <linux/phylink.h>
 
 #define AT803X_INTR_ENABLE			0x12
 #define AT803X_INTR_ENABLE_AUTONEG_ERR		BIT(15)
@@ -98,10 +93,6 @@ static struct at803x_phy_hw_stat at803x_hw_stats[] = {
 };
 
 struct at803x_priv {
-	struct fwnode_handle *sfp_fwnode;
-	struct sfp_bus *sfp_bus;
-	enum phy_state state;
-	bool running;
 	bool phy_reset:1;
 };
 
@@ -112,35 +103,6 @@ struct at803x_context {
 	u16 int_enable;
 	u16 smart_speed;
 	u16 led_control;
-};
-
-static int at803x_sfp_insert(void *upstream, const struct sfp_eeprom_id *id)
-{
-	struct phy_device *phydev = upstream;
-	struct at803x_priv *priv = phydev->priv;
-	__ETHTOOL_DECLARE_LINK_MODE_MASK(support) = { 0, };
-	phy_interface_t iface;
-
-	sfp_parse_support(priv->sfp_bus, id, support);
-	iface = sfp_select_interface(priv->sfp_bus, id, support);
-
-	pr_warn("at803x_sfp_insert: Mode: %s\n", phy_modes(iface));
-
-	if (iface == PHY_INTERFACE_MODE_SGMII) {
-		iface = PHY_INTERFACE_MODE_1000BASEX;
-		dev_err(&phydev->mdio.dev, "sgmii not supported but try 1000basex any way!\n");
-	}
-
-	if (iface != PHY_INTERFACE_MODE_1000BASEX) {
-		dev_err(&phydev->mdio.dev, "incompatible SFP module inserted\n");
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
-static const struct sfp_upstream_ops at803x_sfp_ops = {
-	.module_insert = at803x_sfp_insert,
 };
 
 static int at803x_phy_get_sset_count(struct phy_device *phydev)
@@ -219,12 +181,14 @@ static inline int at803x_enable_tx_delay(struct phy_device *phydev)
 
 static int at803x_disable_rx_delay(struct phy_device *phydev)
 {
+	pr_warn("at803x_disable_rx_delay\n");
 	return at803x_debug_reg_mask(phydev, AT803X_DEBUG_REG_0,
 				     AT803X_DEBUG_RX_CLK_DLY_EN, 0);
 }
 
 static int at803x_disable_tx_delay(struct phy_device *phydev)
 {
+	pr_warn("at803x_disable_tx_delay\n");
 	return at803x_debug_reg_mask(phydev, AT803X_DEBUG_REG_5,
 				     AT803X_DEBUG_TX_CLK_DLY_EN, 0);
 }
@@ -345,38 +309,14 @@ static int at803x_probe(struct phy_device *phydev)
 	struct device *dev = &phydev->mdio.dev;
 	struct at803x_priv *priv;
 
-	pr_warn("at803x_probe: Mode: %s\n", phy_modes(phydev->interface));
-
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
 	phydev->priv = priv;
 
-	if (phydev->mdio.dev.fwnode) {
-		struct fwnode_reference_args ref;
-		int ret;
-
-		ret = fwnode_property_get_reference_args(phydev->mdio.dev.fwnode,
-							 "sfp", NULL, 0, 0,
-							 &ref);
-		if (ret == 0)
-			priv->sfp_fwnode = ref.fwnode;
-	}
-
 	return 0;
 }
-
-static void at803x_remove(struct phy_device *phydev)
-{
-	struct at803x_priv *priv = phydev->priv;
-
-	if (priv->sfp_bus)
-		sfp_unregister_upstream(priv->sfp_bus);
-
-	fwnode_handle_put(priv->sfp_fwnode);
-}
-
 
 static int at803x_mode(struct phy_device *phydev)
 {
@@ -392,42 +332,16 @@ static int at803x_mode(struct phy_device *phydev)
 
 static int at803x_config_init(struct phy_device *phydev)
 {
-	struct at803x_priv *priv = phydev->priv;
-	__ETHTOOL_DECLARE_LINK_MODE_MASK(supported) = { 0, };
 	int ret;
 	u32 v;
-	int phy_mode;
-
-	/* Check that the PHY interface type is compatible */
-	if (!phy_interface_mode_is_rgmii(phydev->interface)) {
-		pr_warn("at803x_config_init: %s not supported!\n", phy_modes(phydev->interface));
-		return -ENODEV;
-	}
-
-
-	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_RXID ||
-			phydev->interface == PHY_INTERFACE_MODE_RGMII_ID) {
-		ret = at803x_enable_rx_delay(phydev);
-		if (ret < 0)
-			return ret;
-	}
-
-	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_TXID ||
-			phydev->interface == PHY_INTERFACE_MODE_RGMII_ID) {
-		ret = at803x_enable_tx_delay(phydev);
-		if (ret < 0)
-			return ret;
-	}
-	
-	pr_warn("at803x_config_init: Mode: %s\n", phy_modes(phydev->interface));
-
-	__set_bit(ETHTOOL_LINK_MODE_Pause_BIT, supported);
-	__set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, supported);
 
 	if ( (phydev->drv->phy_id == ATH8031_PHY_ID &&
 		phydev->interface == PHY_INTERFACE_MODE_SGMII) ||
 		(at803x_mode(phydev) == AT803X_MODE_FIBER) )
 	{
+		//phydev->interface = PHY_INTERFACE_MODE_RGMII_RXID;
+
+		// pr_warn("at803x_config_init: FIBER: %s\n", phy_modes(phydev->interface));
 		v = phy_read(phydev, AT803X_REG_CHIP_CONFIG);
 		/* select SGMII/fiber page */
 
@@ -446,41 +360,26 @@ static int at803x_config_init(struct phy_device *phydev)
 						v | AT803X_BT_BX_REG_SEL);
 		if (ret)
 			return ret;
-		__set_bit(ETHTOOL_LINK_MODE_FIBRE_BIT, supported);
-		__set_bit(ETHTOOL_LINK_MODE_1000baseX_Full_BIT, supported);
-		__set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, supported);
-		__set_bit(ETHTOOL_LINK_MODE_MII_BIT, supported);
-	} else {
-		__set_bit(ETHTOOL_LINK_MODE_TP_BIT, supported);
-		__set_bit(ETHTOOL_LINK_MODE_MII_BIT, supported);
-			__set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
-				  supported);			
-			__set_bit(ETHTOOL_LINK_MODE_1000baseT_Half_BIT,
-				  supported);
-			__set_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT,
-				  supported);
-			__set_bit(ETHTOOL_LINK_MODE_100baseT_Half_BIT,
-				  supported);
-			__set_bit(ETHTOOL_LINK_MODE_10baseT_Full_BIT,
-				  supported);
-			__set_bit(ETHTOOL_LINK_MODE_10baseT_Half_BIT,
-				  supported);
+
 	}
+
 	ret = genphy_config_init(phydev);
 	if (ret < 0)
 		return ret;
 
-	linkmode_copy(phydev->supported, supported);
-	linkmode_and(phydev->advertising, phydev->advertising,
-		     phydev->supported);
+	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_RXID ||
+			phydev->interface == PHY_INTERFACE_MODE_RGMII_ID) {
+		ret = at803x_enable_rx_delay(phydev);
+		if (ret < 0)
+			return ret;
+	}
 
-	/* Would be nice to do this in the probe function, but unfortunately,
-	 * phylib doesn't have phydev->attached_dev set there.
-	 */
-	if (priv->sfp_fwnode && !priv->sfp_bus)
-		priv->sfp_bus = sfp_register_upstream(priv->sfp_fwnode,
-						      phydev->attached_dev,
-						      phydev, &at803x_sfp_ops);
+	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_TXID ||
+			phydev->interface == PHY_INTERFACE_MODE_RGMII_ID) {
+		ret = at803x_enable_tx_delay(phydev);
+		if (ret < 0)
+			return ret;
+	}
 
 	return 0;
 }
@@ -519,10 +418,6 @@ static int at803x_config_intr(struct phy_device *phydev)
 static void at803x_link_change_notify(struct phy_device *phydev)
 {
 	struct at803x_priv *priv = phydev->priv;
-	enum phy_state state = phydev->state;
-	bool running;
-
-	//pr_warn("at803x_link_change: Mode: %s\n", phy_modes(phydev->interface));
 
 	/*
 	 * Conduct a hardware reset for AT8030 every time a link loss is
@@ -551,33 +446,14 @@ static void at803x_link_change_notify(struct phy_device *phydev)
 	} else {
 		priv->phy_reset = false;
 	}
-
-	if (priv->sfp_bus && priv->state != state) {
-		priv->state = state;
-
-		running = state >= PHY_UP && state < PHY_HALTED;
-		if (priv->running != running) {
-				priv->running = running;
-				if (running)
-					sfp_upstream_start(priv->sfp_bus);
-				else
-					sfp_upstream_stop(priv->sfp_bus);
-		}
-	}
 }
 
 
 static int at803x_read_status(struct phy_device *phydev) {
-	int ccr, ret, val;
+	int ccr, ret;
 	int pssr;
-
-	phydev->speed = SPEED_UNKNOWN;
-	phydev->duplex = DUPLEX_UNKNOWN;
-	linkmode_zero(phydev->lp_advertising);
-	phydev->link = 0;
-	phydev->pause = 0;
-	phydev->asym_pause = 0;
-	phydev->mdix = 0;
+	__ETHTOOL_DECLARE_LINK_MODE_MASK(supported) = { 0, };
+	u32 mask;
 
 	/* Handle (Fiber) SGMII to RGMII mode */
 	if (at803x_mode(phydev) == AT803X_MODE_FIBER) {
@@ -603,26 +479,11 @@ static int at803x_read_status(struct phy_device *phydev) {
 		if (ret)
 			return ret;
 
-		val = phy_read_mmd(phydev, MDIO_MMD_AN, MDIO_STAT1);
-		if (val < 0)
-			return val;
-
-#if 0
-		if (val & MDIO_AN_STAT1_COMPLETE) {
-			/* Read the link partner's 1G advertisement */
-			val = phy_read_mmd(phydev, MDIO_MMD_AN, MV_AN_STAT1000);
-			if (val < 0)
-				return val;
-
-			mii_stat1000_mod_linkmode_lpa_t(phydev->lp_advertising, val);
-
-			if (phydev->autoneg == AUTONEG_ENABLE)
-				phy_resolve_aneg_linkmode(phydev);
-		}
-#endif
 
 #define		PSSR_LINK      BIT(10)
 #define		PSSR_SYNC_STATUS      BIT(8)
+
+		phydev->link = 0;
 
 		if ((pssr & PSSR_SYNC_STATUS) && (pssr & PSSR_LINK))
 			phydev->link = 1;
@@ -630,7 +491,24 @@ static int at803x_read_status(struct phy_device *phydev) {
 		phydev->speed = SPEED_1000;
 		phydev->duplex = DUPLEX_FULL;
 
+		__set_bit(ETHTOOL_LINK_MODE_Pause_BIT, supported);
+		__set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, supported);
+		__set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, supported);
+		__set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, supported);
+		__set_bit(ETHTOOL_LINK_MODE_FIBRE_BIT, supported);
+		__set_bit(ETHTOOL_LINK_MODE_MII_BIT, supported);
 
+		if (!ethtool_convert_link_mode_to_legacy_u32(&mask, supported))
+			phydev_warn(phydev,
+				    "PHY supports (%*pb) more modes than phylib supports, some modes not supported.\n",
+				    __ETHTOOL_LINK_MODE_MASK_NBITS, supported);
+
+		linkmode_copy(phydev->supported, supported);
+		linkmode_copy(phydev->advertising, supported);
+//		linkmode_and(phydev->advertising, phydev->advertising,
+//			     phydev->supported);
+
+		phy_support_asym_pause(phydev);
 		return 0;
 	}
 
@@ -639,7 +517,8 @@ static int at803x_read_status(struct phy_device *phydev) {
 
 static int at803x_config_aneg(struct phy_device *phydev)
 {
-	pr_warn("at803x_config_aneg: Mode: %s\n", phy_modes(phydev->interface));
+	pr_warn("at803x_config_aneg: enter\n");
+	// return 0;
 	return genphy_config_aneg(phydev);
 }
 
@@ -737,13 +616,12 @@ static struct phy_driver at803x_driver[] = {
 	.name			= "Atheros 8031 ethernet",
 	.phy_id_mask		= AT803X_PHY_ID_MASK,
 	.probe			= at803x_probe,
-	.remove			= at803x_remove,
 	.config_init		= at803x_config_init,
 	.set_wol		= at803x_set_wol,
 	.get_wol		= at803x_get_wol,
 	.suspend		= at803x_suspend,
 	.resume			= at803x_resume,
-	.features		= PHY_GBIT_FEATURES,
+	.features		= PHY_GBIT_FIBRE_FEATURES,
 	.config_aneg		= at803x_config_aneg,
 	.read_status		= at803x_read_status,
 	.aneg_done		= at803x_aneg_done,
@@ -753,7 +631,6 @@ static struct phy_driver at803x_driver[] = {
 	.get_sset_count		= at803x_phy_get_sset_count,
 	.get_strings		= at803x_phy_get_strings,
 	.get_stats		= at803x_phy_get_stats,
-	.link_change_notify	= at803x_link_change_notify,
 } };
 
 module_phy_driver(at803x_driver);

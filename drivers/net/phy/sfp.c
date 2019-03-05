@@ -1746,7 +1746,7 @@ static void sfp_sm_event(struct sfp *sfp, unsigned int event)
 {
 	mutex_lock(&sfp->sm_mutex);
 
-	dev_dbg(sfp->dev, "SM: enter %s:%s:%s event %s\n",
+	dev_info(sfp->dev, "SM: enter %s:%s:%s event %s\n",
 		mod_state_to_str(sfp->sm_mod_state),
 		dev_state_to_str(sfp->sm_dev_state),
 		sm_state_to_str(sfp->sm_state),
