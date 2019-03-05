@@ -288,8 +288,7 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 {
 	struct mtk_mac *mac = netdev_priv(ndev);
 	u32 mcr = MAC_MCR_MAX_RX_1536 | MAC_MCR_IPG_CFG |
-		  MAC_MCR_FORCE_MODE | MAC_MCR_TX_EN |
-		  MAC_MCR_RX_EN | MAC_MCR_BACKOFF_EN |
+		  MAC_MCR_TX_EN | MAC_MCR_RX_EN | MAC_MCR_BACKOFF_EN |
 		  MAC_MCR_BACKPR_EN;
 	
 	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII) &&
@@ -300,32 +299,9 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 	    !mac->id)
 		mt7621_gmac0_rgmii_adjust(mac->hw, mac->trgmii);
 
-	if (mode == MLO_AN_FIXED)
-		mcr = MAC_MCR_FIXED_LINK;
-	else {
-
-	if (!state->an_enabled) {
-	switch (state->speed) {
-	case SPEED_1000:
-		mcr |= MAC_MCR_SPEED_1000;
-		break;
-	case SPEED_100:
-		mcr |= MAC_MCR_SPEED_100;
-		break;
-	};
-
-	mcr |= MAC_MCR_FORCE_LINK;
-
-	if (state->duplex) 
-		mcr |= MAC_MCR_FORCE_DPX;
-
-	mcr |= MAC_MCR_FORCE_TX_FC | MAC_MCR_FORCE_RX_FC;
-	}
-
-	}
 	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
 
-	pr_warn("mtk_mac_config: GM%d: M%d: [%i](%s) mcr:%x an:%d\n", mac->id, mode, state->interface, phy_modes(state->interface), mcr, state->an_enabled);
+	pr_warn("mtk_mac_config: GM%d: M%d: [%i](%s) mcr:%x\n", mac->id, mode, state->interface, phy_modes(state->interface), mcr);
 
 	return;
 }
@@ -333,8 +309,11 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 static int mtk_mac_link_state(struct net_device *ndev,
 			      struct phylink_link_state *state)
 {
-	pr_warn("mtk_mac_link_state %d\n", state->link);
-	return 1;
+	struct mtk_mac *mac = netdev_priv(ndev);
+
+	int val = (mtk_r32(mac->hw, MTK_MAC_MCR(mac->id)) & 0x1) ? 1 : 0;
+	pr_warn("mtk_mac_link_state: %d\n", val);
+	return val;
 }
 
 static void mtk_mac_an_restart(struct net_device *ndev)
@@ -345,14 +324,24 @@ static void mtk_mac_an_restart(struct net_device *ndev)
 static void mtk_mac_link_down(struct net_device *ndev, unsigned int mode,
 			      phy_interface_t interface)
 {
-	pr_warn("mtk_mac_link_down: mode %d\n", mode);
+	struct mtk_mac *mac = netdev_priv(ndev);
+
+	if (mode == MLO_AN_FIXED) {
+		pr_warn("mtk_mac_link_down: GM%d\n", mac->id);
+		mtk_w32(mac->hw, 0x8000, MTK_MAC_MCR(mac->id));
+	}
 }
 
 static void mtk_mac_link_up(struct net_device *ndev, unsigned int mode,
 			    phy_interface_t interface,
 			    struct phy_device *phy)
 {
-	pr_warn("mtk_mac_link_up: mode %d\n", mode);
+	struct mtk_mac *mac = netdev_priv(ndev);
+
+	if (mode == MLO_AN_FIXED) {
+		pr_warn("mtk_mac_link_up: GM%d\n", mac->id);
+		mtk_w32(mac->hw, MAC_MCR_FIXED_LINK, MTK_MAC_MCR(mac->id));
+	}
 }
 
 static void mtk_validate(struct net_device *ndev, unsigned long *supported,
@@ -1907,15 +1896,7 @@ static int mtk_open(struct net_device *dev)
 {
 	struct mtk_mac *mac = netdev_priv(dev);
 	struct mtk_eth *eth = mac->hw;
-	struct fwnode_handle *fixed_node;
-
-	fixed_node = fwnode_get_named_child_node(eth->dev->fwnode, "fixed-link");
-	if (fixed_node)
-		netdev_err(dev, "eth->dev->fwnode\n");
-
 	int err = phylink_of_phy_connect(mac->phylink, mac->of_node, 0);
-
-	netdev_err(dev, "mtk_open: %d\n", err);
 
 	if (err) {
 		netdev_err(dev, "mtk_open: could not attach PHY: %d\n", err);
@@ -2162,7 +2143,7 @@ static void mtk_uninit(struct net_device *dev)
 	struct mtk_mac *mac = netdev_priv(dev);
 	struct mtk_eth *eth = mac->hw;
 
-	phy_disconnect(dev->phydev);
+	phylink_disconnect_phy(mac->phylink);
 	mtk_tx_irq_disable(eth, ~0);
 	mtk_rx_irq_disable(eth, ~0);
 }
@@ -2288,9 +2269,7 @@ static int mtk_get_link_ksettings(struct net_device *ndev,
 	if (unlikely(test_bit(MTK_RESETTING, &mac->hw->state)))
 		return -EBUSY;
 
-	phy_ethtool_ksettings_get(ndev->phydev, cmd);
-
-	return 0;
+	return phylink_ethtool_ksettings_get(mac->phylink, cmd);
 }
 
 static int mtk_set_link_ksettings(struct net_device *ndev,
@@ -2301,7 +2280,7 @@ static int mtk_set_link_ksettings(struct net_device *ndev,
 	if (unlikely(test_bit(MTK_RESETTING, &mac->hw->state)))
 		return -EBUSY;
 
-	return phy_ethtool_ksettings_set(ndev->phydev, cmd);
+	return phylink_ethtool_ksettings_set(mac->phylink, cmd);
 }
 
 static void mtk_get_drvinfo(struct net_device *dev,
@@ -2335,7 +2314,10 @@ static int mtk_nway_reset(struct net_device *dev)
 	if (unlikely(test_bit(MTK_RESETTING, &mac->hw->state)))
 		return -EBUSY;
 
-	return genphy_restart_aneg(dev->phydev);
+	if (!mac->phylink)
+		return -ENOTSUPP;
+
+	return phylink_ethtool_nway_reset(mac->phylink);
 }
 
 static u32 mtk_get_link(struct net_device *dev)
@@ -2470,7 +2452,7 @@ static const struct ethtool_ops mtk_ethtool_ops = {
 	.get_msglevel		= mtk_get_msglevel,
 	.set_msglevel		= mtk_set_msglevel,
 	.nway_reset		= mtk_nway_reset,
-	.get_link		= mtk_get_link,
+	.get_link		= ethtool_op_get_link,
 	.get_strings		= mtk_get_strings,
 	.get_sset_count		= mtk_get_sset_count,
 	.get_ethtool_stats	= mtk_get_ethtool_stats,
@@ -2579,7 +2561,6 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 
 	eth->netdev[id]->irq = eth->irq[0];
 	eth->netdev[id]->dev.of_node = np;
-
 
 	return 0;
 
@@ -2763,7 +2744,6 @@ static int mtk_remove(struct platform_device *pdev)
 	netif_napi_del(&eth->tx_napi);
 	netif_napi_del(&eth->rx_napi);
 	mtk_cleanup(eth);
-	
 	mtk_mdio_cleanup(eth);
 
 	return 0;
