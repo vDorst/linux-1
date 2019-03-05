@@ -519,9 +519,9 @@ mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 		for (i = 0 ; i < NUM_TRGMII_CTRL; i++)
 			mt7530_rmw(priv, MT7530_TRGMII_RD(i),
 				   RD_TAP_MASK, RD_TAP(16));
-	else	
+	else
 		if (priv->id != ID_MT7621)
-			mt7623_trgmii_set(priv, GSW_INTF_MODE, 
+			mt7623_trgmii_set(priv, GSW_INTF_MODE,
 						INTF_MODE_TRGMII);
 
 	return 0;
@@ -627,7 +627,7 @@ static void mt7530_adjust_link(struct dsa_switch *ds, int port,
 {
 	struct mt7530_priv *priv = ds->priv;
 
-	dev_info(priv->dev, "mt7530_adjust_link: phy-mode %s\n", phy_modes(phydev->interface));
+	dev_info(priv->dev, "mt7530_adjust_link: P%d phy-mode %s\n", port, phy_modes(phydev->interface));
 
 	if (phy_is_pseudo_fixed_link(phydev)) {
 		dev_dbg(priv->dev, "phy-mode for master device = %x\n",
@@ -681,20 +681,20 @@ static void mt7530_adjust_link(struct dsa_switch *ds, int port,
 	}
 }
 
-void mt7530_setup_port5(struct mt7530_priv *priv, phy_interface_t interface)
+void mt7530_setup_port5(struct mt7530_priv *priv)
 {
 	/* Enable and setup Port 5; */
 	int val = MHWTRAP_MANUAL | MHWTRAP_P5_MAC_SEL;
 	mutex_lock(&priv->reg_mutex);
 
-	if (phy_interface_mode_is_rgmii( interface ))
+	if (phy_interface_mode_is_rgmii( priv->p5_interface ))
 		val |= MHWTRAP_P5_RGMII_MODE;
 
 	mt7530_rmw(priv, MT7530_MHWTRAP,
 		   MHWTRAP_P5_RGMII_MODE | MHWTRAP_P5_DIS, val);
 
 	val = mt7530_read(priv, MT7530_MHWTRAP);
-	pr_warn("Setup port 5 HWTRAP: %x\n", val);
+	pr_warn("Setup P5 HWTRAP: %x, phy-mode: %s\n", val, phy_modes(priv->p5_interface));
 
 	/* P5 RGMII TX Clock Control, delay 0 */
 	mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x10));
@@ -707,7 +707,6 @@ void mt7530_setup_port5(struct mt7530_priv *priv, phy_interface_t interface)
 	val = P5_IO_CLK_DRV(1) | P5_IO_DATA_DRV(1);
 	mt7530_write(priv, MT7530_IO_DRV_CR, val);
 
-	priv->p5_interface = interface;
 	mutex_unlock(&priv->reg_mutex);
 }
 
@@ -716,9 +715,14 @@ static int
 mt7530_cpu_port_enable(struct mt7530_priv *priv,
 		       int port)
 {
+	pr_info("mt7530_cpu_port_enable: P%d\n", port);
+
 	/* Enable Mediatek header mode on the cpu port */
 	mt7530_write(priv, MT7530_PVC_P(port),
 		     PORT_SPEC_TAG);
+
+	/* Setup the MAC by default for the cpu port */
+	mt7530_write(priv, MT7530_PMCR_P(port), PMCR_CPUP_LINK);
 
 	/* Disable auto learning on the cpu port */
 	mt7530_set(priv, MT7530_PSC_P(port), SA_DIS);
@@ -747,11 +751,10 @@ mt7530_port_enable(struct dsa_switch *ds, int port,
 
 	pr_info("mt7530_port_enable: P%d\n", port);
 
-	/* setup CPU port */
-	if (dsa_is_cpu_port(ds, port)) 
-		return mt7530_cpu_port_enable(priv, port);
-	
 	mutex_lock(&priv->reg_mutex);
+
+	/* Setup the MAC for the user port */
+	mt7530_write(priv, MT7530_PMCR_P(port), PMCR_USERP_LINK);
 
 	/* Allow the user port gets connected to the cpu port and also
 	 * restore the port matrix if the port is the member of a certain
@@ -774,10 +777,9 @@ mt7530_port_disable(struct dsa_switch *ds, int port,
 {
 	struct mt7530_priv *priv = ds->priv;
 
-	pr_info("mt7530_port_disable: P%d\n", port);
+	//pr_info("mt7530_port_disable: P%d\n", port);
 
 	mutex_lock(&priv->reg_mutex);
-
 
 	/* Clear up all port matrix which could be restored in the next
 	 * enablement for the port.
@@ -1346,10 +1348,7 @@ mt7530_setup(struct dsa_switch *ds)
 		/* Disable forwarding by default on all ports */
 		mt7530_rmw(priv, MT7530_PCR_P(i), PCR_MATRIX_MASK,
 			   PCR_MATRIX_CLR);
-		
-		/* enable CPU port here, Documentation/networking/dsa/dsa.txt
-		 * no cpu interface is created so it never triggers a link up call
-		 */
+
 		if (dsa_is_cpu_port(ds, i))
 			mt7530_cpu_port_enable(priv, i);
 		else
@@ -1364,15 +1363,12 @@ mt7530_setup(struct dsa_switch *ds)
 	return 0;
 }
 
-
 static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 				  unsigned int mode,
 				  const struct phylink_link_state *state)
 {
 	struct mt7530_priv *priv = ds->priv;
 	u32 mcr = PMCR_USERP_LINK;
-
-	pr_warn("mt7530_phylink_mac_config port: %d, mode: %x, %s\n", port, mode, phy_modes(state->interface));
 
 	switch (port) {
 	case 0: /* Internal phy */
@@ -1387,41 +1383,44 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 		if (!phy_interface_mode_is_rgmii(state->interface) &&
 		    state->interface != PHY_INTERFACE_MODE_MII)
 			goto unsupported;
-		if (priv->p5_interface != state->interface)
-			mt7530_setup_port5(priv, state->interface);
-
+		if (priv->p5_interface != state->interface) {
+			priv->p5_interface = state->interface;
+			mt7530_setup_port5(priv);
+		}
 		break;
 	case 6: /* 1e cpu port */
 		if (!phy_interface_mode_is_rgmii(state->interface) &&
 		    state->interface != PHY_INTERFACE_MODE_TRGMII)
 			goto unsupported;
-
-		/* Setup TX circuit incluing relevant PAD and driving */
-		mt7530_pad_clk_setup(ds, state->interface);
-
-		if (priv->id == ID_MT7530) {
-			/* Setup RX circuit, relevant PAD and driving on the
-			 * host which must be placed after the setup on the
-			 * device side is all finished.
-			 */
-			mt7623_pad_clk_setup(ds);
-		}
 		break;
 	default:
 		dev_err(ds->dev, "Unsupported port: %i\n", port);
 		return;
 	}
 
-	if (dsa_is_cpu_port(ds,port))
-		mcr = PMCR_CPUP_LINK;			
+	if (!state->an_enabled) {
+		pr_warn("mt7530_phylink_mac_config forced!");
+		mcr |= PMCR_FORCE_MODE;
+		switch (state->speed) {
+		case SPEED_1000:
+			mcr |= PMCR_FORCE_SPEED_1000;
+			break;
+		case SPEED_100:
+			mcr |= PMCR_FORCE_SPEED_100;
+			break;
+		};
+		if (state->duplex == DUPLEX_FULL)
+			mcr |= PMCR_FORCE_FDX;
+	}
 
 	mt7530_write(priv, MT7530_PMCR_P(port), mcr);
+
+	pr_warn("mt7530_phylink_mac_config P%d, mode: %x, %s, mcr=%x link %d\n", port, mode, phy_modes(state->interface),mcr,state->link);
 
 	return;
 
 unsupported:
 	dev_err(ds->dev, "Unsupported interface: %d\n", state->interface);
-	return;
 }
 
 static void mt7530_phylink_mac_link_down(struct dsa_switch *ds, int port,
@@ -1429,11 +1428,11 @@ static void mt7530_phylink_mac_link_down(struct dsa_switch *ds, int port,
 				     phy_interface_t interface)
 {
 	struct mt7530_priv *priv = ds->priv;
-	pr_warn("mt7530_phylink_mac_link_down port: %d, mode: %x, %s: do nothing\n", port, mode, phy_modes(interface));
 
-	if (mode == MLO_AN_FIXED)
+	if (mode == MLO_AN_FIXED) {
+		pr_warn("mt7530_phylink_mac_link_down: P%d, mode: %x, %s: do nothing\n", port, mode, phy_modes(interface));
 		mt7530_write(priv, MT7530_PMCR_P(port), 0);
-
+	}
 }
 
 static void mt7530_phylink_mac_link_up(struct dsa_switch *ds, int port,
@@ -1442,11 +1441,11 @@ static void mt7530_phylink_mac_link_up(struct dsa_switch *ds, int port,
 				   struct phy_device *phydev)
 {
 	struct mt7530_priv *priv = ds->priv;
-	u32 mcr = PMCR_FIXED_LINK;
 
-	pr_warn("mt7530_phylink_mac_link_up port: %d, mode: %x, %s: do nothing\n", port, mode, phy_modes(interface));
-	if (mode == MLO_AN_FIXED)
-		mt7530_write(priv, MT7530_PMCR_P(port), mcr);
+	if (mode == MLO_AN_FIXED) {
+		pr_warn("mt7530_phylink_mac_link_up P%d, mode: %x, %s: do nothing\n", port, mode, phy_modes(interface));
+		mt7530_write(priv, MT7530_PMCR_P(port), PMCR_FIXED_LINK);
+	}
 }
 
 static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
@@ -1455,7 +1454,7 @@ static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
 {
 	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
 
-	pr_warn("mt7530_phylink_validate: P%d: [%i](%s)\n", port, state->interface, phy_modes(state->interface));
+	// pr_warn("mt7530_phylink_validate: P%d: [%i](%s)\n", port, state->interface, phy_modes(state->interface));
 
 	switch (port) {
 	case 0: /* Internal phy */
@@ -1468,11 +1467,11 @@ static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
 		break;
 	case 5: /* 2nd cpu port with phy of port 0 or 4 / external phy */
 		if (!phy_interface_mode_is_rgmii(state->interface) &&
-		    state->interface != PHY_INTERFACE_MODE_MII && 
+		    state->interface != PHY_INTERFACE_MODE_MII &&
 		    state->interface != PHY_INTERFACE_MODE_NA)
 			goto unsupported;
 		break;
-	case 6: /* 1e cpu port */
+	case 6: /* 1st cpu port */
 		if (!phy_interface_mode_is_rgmii(state->interface) &&
 		    state->interface != PHY_INTERFACE_MODE_TRGMII)
 			goto unsupported;
