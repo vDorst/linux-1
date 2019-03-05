@@ -292,8 +292,19 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 		  MAC_MCR_RX_EN | MAC_MCR_BACKOFF_EN |
 		  MAC_MCR_BACKPR_EN;
 	
-	// pr_warn("mtk_mac_config: GM%d: M%d: [%i](%s)\n", mac->id, mode, state->interface, phy_modes(state->interface));
+	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII) &&
+	    !mac->id && !mac->trgmii)
+		mtk_gmac0_rgmii_adjust(mac->hw, state->speed);
 
+	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII_MT7621) &&
+	    !mac->id)
+		mt7621_gmac0_rgmii_adjust(mac->hw, mac->trgmii);
+
+	if (mode == MLO_AN_FIXED)
+		mcr = MAC_MCR_FIXED_LINK;
+	else {
+
+	if (!state->an_enabled) {
 	switch (state->speed) {
 	case SPEED_1000:
 		mcr |= MAC_MCR_SPEED_1000;
@@ -303,16 +314,18 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 		break;
 	};
 
-	if ((state->link) || (mode == MLO_AN_FIXED))
-		mcr |= MAC_MCR_FORCE_LINK;
+	mcr |= MAC_MCR_FORCE_LINK;
 
 	if (state->duplex) 
 		mcr |= MAC_MCR_FORCE_DPX;
 
-	if (!!phylink_test(state->advertising, Pause))
-		mcr |= MAC_MCR_FORCE_TX_FC | MAC_MCR_FORCE_RX_FC;
+	mcr |= MAC_MCR_FORCE_TX_FC | MAC_MCR_FORCE_RX_FC;
+	}
 
+	}
 	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
+
+	pr_warn("mtk_mac_config: GM%d: M%d: [%i](%s) mcr:%x an:%d\n", mac->id, mode, state->interface, phy_modes(state->interface), mcr, state->an_enabled);
 
 	return;
 }
