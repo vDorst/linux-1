@@ -722,7 +722,7 @@ void mt7530_setup_port5(struct mt7530_priv *priv)
 
 	} else {
 		/* P5 RGMII TX Clock Control, delay 0 */
-		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x10));
+		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x14));
 
 		/* P5 RGMII RX Clock Control: delay setting for 1000M */
 		val = CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2);
@@ -812,12 +812,14 @@ mt7530_port_disable(struct dsa_switch *ds, int port,
 	priv->ports[port].enable = false;
 	mt7530_rmw(priv, MT7530_PCR_P(port), PCR_MATRIX_MASK,
 		   PCR_MATRIX_CLR);
-	mt7530_port_set_status(priv, port, 0x8000);
+	mt7530_port_set_status(priv, port, 0);
+
+	mt7530_write(priv, MT7530_PMCR_P(port), PMCR_FORCE_LNK_DOWN);
 
 	/* Disable port 5 hardware */
 	if (port == 5 && !priv->p5_interface) {
-		// mt7530_rmw(priv, MT7530_MHWTRAP, 0, MHWTRAP_MANUAL | MHWTRAP_P5_DIS);
-		//priv->p5_interface = PHY_INTERFACE_MODE_NA;
+		mt7530_rmw(priv, MT7530_MHWTRAP, 0, MHWTRAP_MANUAL | MHWTRAP_P5_DIS);
+		priv->p5_interface = PHY_INTERFACE_MODE_NA;
 	}
 
 	mutex_unlock(&priv->reg_mutex);
@@ -1431,6 +1433,9 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 		return;
 	}
 
+	if (!state->an_enabled)
+		mcr |= PMCR_FIXED_LINK_FC;
+
 	mt7530_write(priv, MT7530_PMCR_P(port), mcr);
 
 	pr_warn("mt7530_phylink_mac_config P%d, mode: %x, %s, mcr=%x link %d\n", port, mode, phy_modes(state->interface),mcr,state->link);
@@ -1449,7 +1454,7 @@ static void mt7530_phylink_mac_link_down(struct dsa_switch *ds, int port,
 
 	if (mode == MLO_AN_FIXED) {
 		pr_warn("mt7530_phylink_mac_link_down: P%d, mode: %x, %s\n", port, mode, phy_modes(interface));
-		mt7530_write(priv, MT7530_PMCR_P(port), 0x8000);
+		mt7530_write(priv, MT7530_PMCR_P(port), PMCR_FORCE_LNK_DOWN);
 	}
 }
 
