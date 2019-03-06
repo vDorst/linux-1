@@ -2543,7 +2543,7 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	}
 
 	mac->phylink = phylink;
-	dev_err(eth->dev, "phymode: %s\n", phy_modes(phy_mode));
+	dev_err(eth->dev, "GM%d: phymode: %s\n", id, phy_modes(phy_mode));
 
 	SET_NETDEV_DEV(eth->netdev[id], eth->dev);
 	eth->netdev[id]->watchdog_timeo = 5 * HZ;

@@ -194,6 +194,7 @@ enum mt7530_vlan_port_attr {
 /* Register for port MAC control register */
 #define MT7530_PMCR_P(x)		(0x3000 + ((x) * 0x100))
 #define  PMCR_IFG_XMIT(x)		(((x) & 0x3) << 18)
+#define  PMCR_EXT_PHY			BIT(17)
 #define  PMCR_MAC_MODE			BIT(16)
 #define  PMCR_FORCE_MODE		BIT(15)
 #define  PMCR_TX_EN			BIT(14)
