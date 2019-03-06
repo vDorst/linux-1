@@ -299,6 +299,19 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 	    !mac->id)
 		mt7621_gmac0_rgmii_adjust(mac->hw, mac->trgmii);
 
+	if (!state->an_enabled) {
+		mcr |= MAC_MCR_FORCE_MODE;
+
+		if (state->speed == SPEED_1000)
+			mcr |= MAC_MCR_SPEED_1000;
+		if (state->speed == SPEED_100)
+			mcr |= MAC_MCR_SPEED_100;
+		if (state->duplex == DUPLEX_FULL)
+			mcr |= MAC_MCR_FORCE_DPX;
+		if (state->link)
+			mcr |= MAC_MCR_FORCE_LINK;
+	}
+
 	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
 
 	pr_warn("mtk_mac_config: GM%d: M%d: [%i](%s) mcr:%x\n", mac->id, mode, state->interface, phy_modes(state->interface), mcr);
