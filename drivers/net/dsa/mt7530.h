@@ -207,6 +207,7 @@ enum mt7530_vlan_port_attr {
 #define  PMCR_FORCE_SPEED_100		BIT(2)
 #define  PMCR_FORCE_FDX			BIT(1)
 #define  PMCR_FORCE_LNK			BIT(0)
+#define  PMCR_FORCE_LNK_DOWN		PMCR_FORCE_MODE
 #define  PMCR_COMMON_LINK		(PMCR_IFG_XMIT(1) | PMCR_MAC_MODE | \
 					 PMCR_BACKOFF_EN | PMCR_BACKPR_EN | \
 					 PMCR_TX_EN | PMCR_RX_EN | \
