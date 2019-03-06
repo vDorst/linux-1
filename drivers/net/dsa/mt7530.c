@@ -439,23 +439,25 @@ static int
 mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 {
 	struct mt7530_priv *priv = ds->priv;
-	u32 ncpo1, ssc_delta, trgint, i, MT7530_TRGMII_TXCTRL_MASK, tap;
+	u32 ncpo1, ssc_delta, trgint, i;
 
 	switch (mode) {
 	case PHY_INTERFACE_MODE_RGMII:
 		trgint = 0;
 		ncpo1 = 0x0c80;
 		ssc_delta = 0x87;
-		MT7530_TRGMII_TXCTRL_MASK = BIT(30)|BIT(28);
-		tap = 0x0855;
+		/* (T)RGMII central align */
+		mt7530_rmw(priv, MT7530_TRGMII_TXCTRL, BIT(30)|BIT(28),0);
+		mt7530_write(priv, MT7530_TRGMII_TCK_CTRL, 0x0855);
 		break;
 	case PHY_INTERFACE_MODE_TRGMII:
 		trgint = 1;
 		/* PLL frequency: MT7621 150MHz, other 162.5MHz */
 		ncpo1 = (priv->id == ID_MT7621 ? 0x0780 : 0x1400);
 		ssc_delta = 0x57;
-		tap = 0x0055;
-		MT7530_TRGMII_TXCTRL_MASK = BIT(30);
+		/* (T)RGMII central align */
+		mt7530_rmw(priv, MT7530_TRGMII_TXCTRL, 0, BIT(30));
+		mt7530_write(priv, MT7530_TRGMII_TCK_CTRL, 0x0055);
 		break;
 	default:
 		dev_err(priv->dev, "xMII mode %d not supported\n", mode);
@@ -464,10 +466,6 @@ mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 
 	mt7530_rmw(priv, MT7530_P6ECR, P6_INTF_MODE_MASK,
 		   P6_INTF_MODE(trgint));
-
-	/* (T)RGMII central align */
-	// mt7530_rmw(priv, MT7530_TRGMII_TXCTRL, MT7530_TRGMII_TXCTRL_MASK, 0);
-	// mt7530_write(priv, MT7530_TRGMII_TCK_CTRL, tap);
 
 	/* Lower Tx Driving for TRGMII path */
 	for (i = 0 ; i < NUM_TRGMII_CTRL ; i++)
