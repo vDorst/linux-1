@@ -1445,15 +1445,15 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 			mcr |= PMCR_FORCE_FDX;
 		if (state->link)
 			mcr |= PMCR_FORCE_LNK;
+		if (state->pause & MLO_PAUSE_TX)
+			mcr |= PMCR_TX_FC_EN;
+		if (state->pause & MLO_PAUSE_RX)
+			mcr |= PMCR_RX_FC_EN;
 	}
-	if (state->pause & MLO_PAUSE_TX)
-		mcr |= PMCR_TX_FC_EN;
-	if (state->pause & MLO_PAUSE_RX)
-		mcr |= PMCR_RX_FC_EN;
 
 	mt7530_write(priv, MT7530_PMCR_P(port), mcr);
 
-	pr_warn("mt7530_phylink_mac_config P%d, mode: %x, %s, mcr=%x link %d\n", port, mode, phy_modes(state->interface),mcr,state->link);
+	pr_warn("mt7530_phylink_mac_config P%d, mode: %x, %s, mcr=%x pause=%x\n", port, mode, phy_modes(state->interface),mcr,state->pause);
 
 	return;
 
@@ -1521,7 +1521,6 @@ static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
 		return;
 	}
 
-	/* Allow all the expected bits */
 	phylink_set(mask, Autoneg);
 	phylink_set(mask, Pause);
 	phylink_set(mask, Asym_Pause);
