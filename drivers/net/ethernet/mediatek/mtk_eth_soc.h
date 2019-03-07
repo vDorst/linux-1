@@ -329,6 +329,17 @@
 				 MAC_MCR_FORCE_TX_FC | MAC_MCR_SPEED_1000 | \
 				 MAC_MCR_FORCE_DPX | MAC_MCR_FORCE_LINK)
 
+/* Mac status registers */
+#define MTK_MAC_MSR(x)		(0x10108 + (x * 0x100))
+#define MAC_MSR_EEE1G		BIT(7)
+#define MAC_MSR_EEE100M		BIT(6)
+#define MAC_MSR_RX_FC		BIT(5)
+#define MAC_MSR_TX_FC		BIT(4)
+#define MAC_MSR_SPEED_1000	BIT(3)
+#define MAC_MSR_SPEED_100	BIT(2)
+#define MAC_MSR_DPX		BIT(1)
+#define MAC_MSR_LINK		BIT(0)
+
 /* TRGMII RXC control register */
 #define TRGMII_RCK_CTRL		0x10300
 #define DQSI0(x)		((x << 0) & GENMASK(6, 0))
