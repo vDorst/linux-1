@@ -225,64 +225,6 @@ static void mtk_gmac_sgmii_hw_setup(struct mtk_eth *eth, int mac_id)
 	}
 }
 
-static void mtk_phy_link_adjust(struct net_device *dev)
-{
-	struct mtk_mac *mac = netdev_priv(dev);
-	u16 lcl_adv = 0, rmt_adv = 0;
-	u8 flowctrl;
-	u32 mcr = MAC_MCR_MAX_RX_1536 | MAC_MCR_IPG_CFG |
-		  MAC_MCR_FORCE_MODE | MAC_MCR_TX_EN |
-		  MAC_MCR_RX_EN | MAC_MCR_BACKOFF_EN |
-		  MAC_MCR_BACKPR_EN;
-
-	if (unlikely(test_bit(MTK_RESETTING, &mac->hw->state)))
-		return;
-
-	switch (dev->phydev->speed) {
-	case SPEED_1000:
-		mcr |= MAC_MCR_SPEED_1000;
-		break;
-	case SPEED_100:
-		mcr |= MAC_MCR_SPEED_100;
-		break;
-	};
-
-	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII) &&
-	    !mac->id && !mac->trgmii)
-		mtk_gmac0_rgmii_adjust(mac->hw, dev->phydev->speed);
-
-	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII_MT7621) &&
-	    !mac->id)
-		mt7621_gmac0_rgmii_adjust(mac->hw, mac->trgmii);
-
-	if (dev->phydev->link)
-		mcr |= MAC_MCR_FORCE_LINK;
-
-	if (dev->phydev->duplex) {
-		mcr |= MAC_MCR_FORCE_DPX;
-
-		if (dev->phydev->pause)
-			rmt_adv = LPA_PAUSE_CAP;
-		if (dev->phydev->asym_pause)
-			rmt_adv |= LPA_PAUSE_ASYM;
-
-		lcl_adv = linkmode_adv_to_lcl_adv_t(dev->phydev->advertising);
-		flowctrl = mii_resolve_flowctrl_fdx(lcl_adv, rmt_adv);
-
-		if (flowctrl & FLOW_CTRL_TX)
-			mcr |= MAC_MCR_FORCE_TX_FC;
-		if (flowctrl & FLOW_CTRL_RX)
-			mcr |= MAC_MCR_FORCE_RX_FC;
-
-		netif_dbg(mac->hw, link, dev, "rx pause %s, tx pause %s\n",
-			  flowctrl & FLOW_CTRL_RX ? "enabled" : "disabled",
-			  flowctrl & FLOW_CTRL_TX ? "enabled" : "disabled");
-	}
-
-	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
-}
-
-
 static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 			   const struct phylink_link_state *state)
 {
@@ -310,15 +252,15 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 			mcr |= MAC_MCR_FORCE_DPX;
 		if (state->link)
 			mcr |= MAC_MCR_FORCE_LINK;
+		if (state->pause & MLO_PAUSE_TX)
+			mcr |= MAC_MCR_FORCE_TX_FC;
+		if (state->pause & MLO_PAUSE_RX)
+			mcr |= MAC_MCR_FORCE_RX_FC;
 	}
-	if (state->pause & MLO_PAUSE_TX)
-		mcr |= MAC_MCR_FORCE_TX_FC;
-	if (state->pause & MLO_PAUSE_RX)
-		mcr |= MAC_MCR_FORCE_RX_FC;
 
 	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
 
-	pr_warn("mtk_mac_config: GM%d: M%d: [%i](%s) mcr:%x\n", mac->id, mode, state->interface, phy_modes(state->interface), mcr);
+	pr_warn("mtk_mac_config: GM%d: M%d: [%i](%s) mcr:%x pause=%x\n", mac->id, mode, state->interface, phy_modes(state->interface), mcr, state->pause);
 
 	return;
 }
@@ -403,24 +345,19 @@ static void mtk_validate(struct net_device *ndev, unsigned long *supported,
 		return;
 	}
 
-	/* Allow all the expected bits */
 	phylink_set(mask, Autoneg);
-	phylink_set_port_modes(mask);
 
-	/* Asymmetric pause is unsupported */
 	phylink_set(mask, Pause);
+	phylink_set(mask, Asym_Pause);
 
-	/* Half-duplex at speeds higher than 100Mbit is unsupported */
+	phylink_set(mask, MII);
+
+	phylink_set(mask, 10baseT_Half);
+	phylink_set(mask, 10baseT_Full);
+	phylink_set(mask, 100baseT_Half);
+	phylink_set(mask, 100baseT_Full);
 	phylink_set(mask, 1000baseT_Full);
-	phylink_set(mask, 1000baseX_Full);
-
-	if (!phy_interface_mode_is_8023z(state->interface)) {
-		/* 10M and 100M are only supported in non-802.3z mode */
-		phylink_set(mask, 10baseT_Half);
-		phylink_set(mask, 10baseT_Full);
-		phylink_set(mask, 100baseT_Half);
-		phylink_set(mask, 100baseT_Full);
-	}
+	phylink_set(mask, 1000baseT_Full);
 
 	bitmap_and(supported, supported, mask,
 		   __ETHTOOL_LINK_MODE_MASK_NBITS);
@@ -2362,21 +2299,6 @@ static int mtk_nway_reset(struct net_device *dev)
 		return -ENOTSUPP;
 
 	return phylink_ethtool_nway_reset(mac->phylink);
-}
-
-static u32 mtk_get_link(struct net_device *dev)
-{
-	struct mtk_mac *mac = netdev_priv(dev);
-	int err;
-
-	if (unlikely(test_bit(MTK_RESETTING, &mac->hw->state)))
-		return -EBUSY;
-
-	err = genphy_update_link(dev->phydev);
-	if (err)
-		return ethtool_op_get_link(dev);
-
-	return dev->phydev->link;
 }
 
 static void mtk_get_strings(struct net_device *dev, u32 stringset, u8 *data)
