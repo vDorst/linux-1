@@ -311,6 +311,10 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 		if (state->link)
 			mcr |= MAC_MCR_FORCE_LINK;
 	}
+	if (state->pause & MLO_PAUSE_TX)
+		mcr |= MAC_MCR_FORCE_TX_FC;
+	if (state->pause & MLO_PAUSE_RX)
+		mcr |= MAC_MCR_FORCE_RX_FC;
 
 	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
 
@@ -323,10 +327,37 @@ static int mtk_mac_link_state(struct net_device *ndev,
 			      struct phylink_link_state *state)
 {
 	struct mtk_mac *mac = netdev_priv(ndev);
+	u32 pmsr;
 
-	int val = (mtk_r32(mac->hw, MTK_MAC_MCR(mac->id)) & 0x1) ? 1 : 0;
-	pr_warn("mtk_mac_link_state: %d\n", val);
-	return val;
+	pmsr = mtk_r32(mac->hw, MTK_MAC_MSR(mac->id));
+
+	state->link = (pmsr & MAC_MSR_LINK);
+	state->duplex = (pmsr & MAC_MSR_DPX) >> 1;
+
+	switch (pmsr & (MAC_MSR_SPEED_1000 | MAC_MSR_SPEED_100)) {
+	case 0:
+		state->speed = SPEED_10;
+		break;
+	case MAC_MSR_SPEED_100:
+		state->speed = SPEED_100;
+		break;
+	case MAC_MSR_SPEED_1000:
+		state->speed = SPEED_1000;
+		break;
+	default:
+		state->speed = SPEED_UNKNOWN;
+		break;
+	}
+
+	state->pause = 0;
+	if (pmsr & MAC_MSR_RX_FC)
+		state->pause |= MLO_PAUSE_RX;
+	if (pmsr & MAC_MSR_TX_FC)
+		state->pause |= MLO_PAUSE_TX;
+
+	pr_warn("mtk_mac_link_state: pmsr:%x\n", pmsr);
+
+	return 0;
 }
 
 static void mtk_mac_an_restart(struct net_device *ndev)

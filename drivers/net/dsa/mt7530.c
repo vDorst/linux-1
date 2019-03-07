@@ -1399,7 +1399,8 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 				  const struct phylink_link_state *state)
 {
 	struct mt7530_priv *priv = ds->priv;
-	u32 mcr = PMCR_USERP_LINK;
+	u32 mcr = PMCR_IFG_XMIT(1) | PMCR_MAC_MODE | PMCR_BACKOFF_EN | \
+		  PMCR_BACKPR_EN | PMCR_TX_EN | PMCR_RX_EN;
 
 	switch (port) {
 	case 0: /* Internal phy */
@@ -1433,8 +1434,22 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 		return;
 	}
 
-	if (!state->an_enabled)
-		mcr |= PMCR_FIXED_LINK_FC;
+	if (!state->an_enabled) {
+		mcr |= PMCR_FORCE_MODE;
+
+		if (state->speed == SPEED_1000)
+			mcr |= PMCR_FORCE_SPEED_1000;
+		if (state->speed == SPEED_100)
+			mcr |= PMCR_FORCE_SPEED_100;
+		if (state->duplex == DUPLEX_FULL)
+			mcr |= PMCR_FORCE_FDX;
+		if (state->link)
+			mcr |= PMCR_FORCE_LNK;
+	}
+	if (state->pause & MLO_PAUSE_TX)
+		mcr |= PMCR_TX_FC_EN;
+	if (state->pause & MLO_PAUSE_RX)
+		mcr |= PMCR_RX_FC_EN;
 
 	mt7530_write(priv, MT7530_PMCR_P(port), mcr);
 
@@ -1537,6 +1552,47 @@ unsupported:
 	return;
 }
 
+static int
+mt7530_phylink_mac_link_state(struct dsa_switch *ds, int port,
+			      struct phylink_link_state *state)
+{
+	struct mt7530_priv *priv = ds->priv;
+	u32 pmsr;
+
+	if (port < 0 || port >= MT7530_NUM_PORTS)
+		return -EINVAL;
+
+	pmsr = mt7530_read(priv, MT7530_PMSR_P(port));
+
+	state->link = (pmsr & PMSR_LINK);
+	state->duplex = (pmsr & PMSR_DPX) >> 1;
+
+	switch (pmsr & (PMSR_SPEED_1000 | PMSR_SPEED_100)) {
+	case 0:
+		state->speed = SPEED_10;
+		break;
+	case PMSR_SPEED_100:
+		state->speed = SPEED_100;
+		break;
+	case PMSR_SPEED_1000:
+		state->speed = SPEED_1000;
+		break;
+	default:
+		state->speed = SPEED_UNKNOWN;
+		break;
+	}
+
+	state->pause = 0;
+	if (pmsr & PMSR_RX_FC)
+		state->pause |= MLO_PAUSE_RX;
+	if (pmsr & PMSR_TX_FC)
+		state->pause |= MLO_PAUSE_TX;
+
+	pr_warn("mt7530_phylink_mac_link_state: pmsr:%x\n", pmsr);
+
+	return 0;
+}
+
 static const struct dsa_switch_ops mt7530_switch_ops = {
 	.get_tag_protocol	= mtk_get_tag_protocol,
 	.setup			= mt7530_setup,
@@ -1559,6 +1615,7 @@ static const struct dsa_switch_ops mt7530_switch_ops = {
 	.port_vlan_add		= mt7530_port_vlan_add,
 	.port_vlan_del		= mt7530_port_vlan_del,
 	.phylink_validate	= mt7530_phylink_validate,
+	.phylink_mac_link_state = mt7530_phylink_mac_link_state,
 	.phylink_mac_config	= mt7530_phylink_mac_config,
 	.phylink_mac_link_down	= mt7530_phylink_mac_link_down,
 	.phylink_mac_link_up	= mt7530_phylink_mac_link_up,
