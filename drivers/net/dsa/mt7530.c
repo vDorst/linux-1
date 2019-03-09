@@ -1408,12 +1408,13 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 	case 2:
 	case 3:
 	case 4:
-		if (state->interface != PHY_INTERFACE_MODE_INTERNAL)
+		if (state->interface != PHY_INTERFACE_MODE_INTERNAL && 
+			state->interface != PHY_INTERFACE_MODE_GMII)
 			goto unsupported;
 		break;
 	case 5: /* 2nd cpu port with phy of port 0 or 4 / external phy */
 		if (!phy_interface_mode_is_rgmii(state->interface) &&
-		    state->interface != PHY_INTERFACE_MODE_MII && 
+		    state->interface != PHY_INTERFACE_MODE_MII &&
 		    state->interface != PHY_INTERFACE_MODE_INTERNAL)
 			goto unsupported;
 		if (priv->p5_interface != state->interface) {
@@ -1433,6 +1434,7 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 		dev_err(ds->dev, "Unsupported port: %i\n", port);
 		return;
 	}
+
 
 	if (!state->an_enabled) {
 		mcr |= PMCR_FORCE_MODE;
@@ -1500,13 +1502,16 @@ static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
 	case 2:
 	case 3:
 	case 4:
-		if (state->interface != PHY_INTERFACE_MODE_INTERNAL)
+		if (state->interface != PHY_INTERFACE_MODE_INTERNAL &&
+		    state->interface != PHY_INTERFACE_MODE_NA &&
+		    state->interface != PHY_INTERFACE_MODE_GMII)
 			goto unsupported;
+		phylink_set(mask, TP);
 		break;
 	case 5: /* 2nd cpu port with phy of port 0 or 4 / external phy */
 		if (!phy_interface_mode_is_rgmii(state->interface) &&
 		    state->interface != PHY_INTERFACE_MODE_MII &&
-		    state->interface != PHY_INTERFACE_MODE_NA && 
+		    state->interface != PHY_INTERFACE_MODE_NA &&
 		    state->interface != PHY_INTERFACE_MODE_INTERNAL)
 			goto unsupported;
 		break;
@@ -1547,7 +1552,8 @@ static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
 
 unsupported:
 	bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
-	dev_err(ds->dev, "Unsupported interface: %d\n", state->interface);
+	dev_err(ds->dev, "Unsupported interface: [%d] %s\n", state->interface,
+		phy_modes(state->interface));
 	return;
 }
 
@@ -1564,7 +1570,9 @@ mt7530_phylink_mac_link_state(struct dsa_switch *ds, int port,
 	pmsr = mt7530_read(priv, MT7530_PMSR_P(port));
 
 	state->link = (pmsr & PMSR_LINK);
+	state->an_complete = state->link;
 	state->duplex = (pmsr & PMSR_DPX) >> 1;
+
 
 	switch (pmsr & (PMSR_SPEED_1000 | PMSR_SPEED_100)) {
 	case 0:
@@ -1589,12 +1597,21 @@ mt7530_phylink_mac_link_state(struct dsa_switch *ds, int port,
 
 	pr_warn("mt7530_phylink_mac_link_state: pmsr:%x\n", pmsr);
 
+	return 1;
+}
+
+u32 mt7530_get_phy_flags(struct dsa_switch *ds, int port)
+{
+	pr_warn("%s: P%d\n", __func__, port);
+	if ((port >= 0) && (port <= 4))
+		return PHY_IS_INTERNAL;
 	return 0;
 }
 
 static const struct dsa_switch_ops mt7530_switch_ops = {
 	.get_tag_protocol	= mtk_get_tag_protocol,
 	.setup			= mt7530_setup,
+	.get_phy_flags		= mt7530_get_phy_flags,
 	.get_strings		= mt7530_get_strings,
 	.phy_read		= mt7530_phy_read,
 	.phy_write		= mt7530_phy_write,
