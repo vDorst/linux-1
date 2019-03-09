@@ -515,27 +515,33 @@ static void at803x_link_change_notify(struct phy_device *phydev)
  * advertisement settings. Other bits in advertising are left
  * unchanged.
  */
-static void fiber_lpa_mod_linkmode_lpa_t(unsigned long *advertising, u32 lpa)
+static void fiber_lpa_mod_linkmode_lpa_t(unsigned long *lp_advertising, u32 lpa)
 {
 	linkmode_mod_bit(ETHTOOL_LINK_MODE_1000baseT_Half_BIT,
-			 advertising, lpa & LPA_FIBER_1000HALF);
+			 lp_advertising, lpa & LPA_1000XHALF);
 
 	linkmode_mod_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
-			 advertising, lpa & LPA_FIBER_1000FULL);
+			 lp_advertising, lpa & LPA_1000XFULL);
 
-	linkmode_mod_bit(ETHTOOL_LINK_MODE_Pause_BIT, advertising,
-			 lpa & LPA_PAUSE_FIBER);
+	linkmode_mod_bit(ETHTOOL_LINK_MODE_Pause_BIT, lp_advertising,
+			 lpa & LPA_1000XPAUSE);
 
 	linkmode_mod_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT,
-			 advertising, lpa & LPA_PAUSE_ASYM_FIBER);
+			 lp_advertising, lpa & LPA_1000XPAUSE_ASYM);
+
+	linkmode_mod_bit(ETHTOOL_LINK_MODE_Autoneg_BIT,
+			 lp_advertising, lpa & LPA_LPACK);
+
+	linkmode_mod_bit(ETHTOOL_LINK_MODE_1000baseX_Full_BIT,
+			 lp_advertising, lpa & LPA_1000XFULL);
+	__set_bit(ETHTOOL_LINK_MODE_FIBRE_BIT, lp_advertising);
+
 }
 
 static int at803x_read_status_page_an(struct phy_device *phydev)
 {
 	int status;
 	int lpa;
-
-	linkmode_zero(phydev->lp_advertising);
 
 	status = phy_read(phydev, AT803X_PSSR);
 	if (status < 0)
@@ -544,8 +550,6 @@ static int at803x_read_status_page_an(struct phy_device *phydev)
 	lpa = phy_read(phydev, MII_LPA);
 	if (lpa < 0)
 		return lpa;
-
-	//pr_warn("803x_read_status: %x, lpa:%x\n", status,lpa);
 
 	if (status & PSSR_DUPLEX)
 		phydev->duplex = DUPLEX_FULL;
@@ -572,7 +576,7 @@ static int at803x_read_status_page_an(struct phy_device *phydev)
 	/* The fiber link is only 1000M capable */
 	fiber_lpa_mod_linkmode_lpa_t(phydev->lp_advertising, lpa);
 
-	pr_warn("803x_read_status: status: %x lpa: %x lp_a: 0x%lx\n", status, lpa, *phydev->lp_advertising);
+	// pr_warn("803x_read_status: status: %x lpa: %x lp_a: 0x%lx\n", status, lpa, *phydev->lp_advertising);
 
 	if (phydev->duplex == DUPLEX_FULL) {
 		if (lpa & LPA_PAUSE_FIBER)
@@ -644,7 +648,7 @@ static int at803x_read_status(struct phy_device *phydev) {
 
 		if (phydev->autoneg == AUTONEG_ENABLE)
 			ret = at803x_read_status_page_an(phydev);
-		} else {
+		else
 			ret = at803x_read_status_page_fixed(phydev);
 
 		if (ret)
