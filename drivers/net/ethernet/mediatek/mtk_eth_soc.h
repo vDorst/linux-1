@@ -683,23 +683,20 @@ struct mtk_eth {
 /* struct mtk_mac -	the structure that holds the info about the MACs of the
  *			SoC
  * @id:			The number of the MAC
- * @ge_mode:            Interface mode kept for setup restoring
+ * @interface:		Interface mode kept for detecting change in hw settings
  * @of_node:		Our devicetree node
  * @hw:			Backpointer to our main datastruture
  * @hw_stats:		Packet statistics counter
- * @trgmii		Indicate if the MAC uses TRGMII connected to internal
-			switch
  */
 struct mtk_mac {
 	int				id;
-	int				ge_mode;
+	phy_interface_t			interface;
 	struct device_node		*of_node;
 	struct phylink 			*phylink;
 	struct mtk_eth			*hw;
 	struct mtk_hw_stats		*hw_stats;
 	__be32				hwlro_ip[MTK_MAX_LRO_IP_CNT];
 	int				hwlro_ip_cnt;
-	bool				trgmii;
 };
 
 /* the struct describing the SoC. these are declared in the soc_xyz.c files */

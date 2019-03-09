@@ -139,7 +139,7 @@ static int mtk_mdio_read(struct mii_bus *bus, int phy_addr, int phy_reg)
 	return _mtk_mdio_read(eth, phy_addr, phy_reg);
 }
 
-static void mt7621_gmac0_rgmii_adjust(struct mtk_eth *eth, int trgmii)
+static int mt7621_gmac0_rgmii_adjust(struct mtk_eth *eth, phy_interface_t interface)
 {
 	u32 val;
 
@@ -148,13 +148,15 @@ static void mt7621_gmac0_rgmii_adjust(struct mtk_eth *eth, int trgmii)
 	if ( val & SYSCFG_DRAM_TYPE_DDR2 ) {
 		dev_err(eth->dev,
 			"TRGMII mode with DDR2 memory not supported!\n");
-		val = 0;
-	} else {
-		val = (trgmii ? ETHSYS_TRGMII_MT7621_DDR_PLL : 0);
+		return -EOPNOTSUPP;
 	}
+
+	val = (interface == PHY_INTERFACE_MODE_TRGMII ? ETHSYS_TRGMII_MT7621_DDR_PLL : 0);
 
 	regmap_update_bits(eth->ethsys, ETHSYS_CLKCFG0,
 			   ETHSYS_TRGMII_MT7621_MASK, val);
+
+	return 0;
 }
 
 static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth, int speed)
@@ -229,18 +231,61 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 			   const struct phylink_link_state *state)
 {
 	struct mtk_mac *mac = netdev_priv(ndev);
+	struct mtk_eth *eth = mac->hw;
+
+	u32 ge_mode = 0, val;
 	u32 mcr = MAC_MCR_MAX_RX_1536 | MAC_MCR_IPG_CFG |
 		  MAC_MCR_TX_EN | MAC_MCR_RX_EN | MAC_MCR_BACKOFF_EN |
 		  MAC_MCR_BACKPR_EN;
-	
-	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII) &&
-	    !mac->id && !mac->trgmii)
-		mtk_gmac0_rgmii_adjust(mac->hw, state->speed);
 
-	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII_MT7621) &&
-	    !mac->id)
-		mt7621_gmac0_rgmii_adjust(mac->hw, mac->trgmii);
+	if (mac->interface != state->interface) {
+		if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII_MT7621))
+				if (mt7621_gmac0_rgmii_adjust(mac->hw, state->interface))
+					goto err_phy;
+		/* Setup soc pin functions */
+		switch (state->interface) {
+		case PHY_INTERFACE_MODE_TRGMII:
+			if (mac->id)
+				goto err_phy;
 
+			/* Setup GMAC clock for TRGMII mode */
+			if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII))
+				mtk_gmac0_rgmii_adjust(mac->hw, state->speed);
+		case PHY_INTERFACE_MODE_RGMII_TXID:
+		case PHY_INTERFACE_MODE_RGMII_RXID:
+		case PHY_INTERFACE_MODE_RGMII_ID:
+		case PHY_INTERFACE_MODE_RGMII:
+			break;
+		case PHY_INTERFACE_MODE_SGMII:
+			if (MTK_HAS_CAPS(eth->soc->caps, MTK_SGMII))
+				mtk_gmac_sgmii_hw_setup(eth, mac->id);
+			break;
+		case PHY_INTERFACE_MODE_MII:
+			ge_mode = 1;
+			break;
+		case PHY_INTERFACE_MODE_REVMII:
+			ge_mode = 2;
+			break;
+		case PHY_INTERFACE_MODE_RMII:
+			if (mac->id)
+				goto err_phy;
+			ge_mode = 3;
+			break;
+		default:
+			goto err_phy;
+		}	
+
+		/* put the gmac into the right mode */
+		regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
+		val &= ~SYSCFG0_GE_MODE(SYSCFG0_GE_MASK, mac->id);
+		val |= SYSCFG0_GE_MODE(ge_mode, mac->id);
+		regmap_write(eth->ethsys, ETHSYS_SYSCFG0, val);
+
+		mac->interface = state->interface;
+		pr_warn("mtk_mac_config_hw: GMAC%d: mode %s\n", mac->id, phy_modes(state->interface));
+	}
+
+	/* Setup mac */
 	if (!state->an_enabled) {
 		mcr |= MAC_MCR_FORCE_MODE;
 
@@ -252,6 +297,8 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 			mcr |= MAC_MCR_FORCE_DPX;
 		if (state->link)
 			mcr |= MAC_MCR_FORCE_LINK;
+		if (state->pause)
+			mcr |= MAC_MCR_FORCE_TX_FC | MAC_MCR_FORCE_RX_FC;
 		if (state->pause & MLO_PAUSE_TX)
 			mcr |= MAC_MCR_FORCE_TX_FC;
 		if (state->pause & MLO_PAUSE_RX)
@@ -260,8 +307,12 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 
 	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
 
-	pr_warn("mtk_mac_config: GM%d: M%d: [%i](%s) mcr:%x pause=%x\n", mac->id, mode, state->interface, phy_modes(state->interface), mcr, state->pause);
+	pr_warn("mtk_mac_config: GMAC%d: M%d: (%s) mcr:%x pause=%x\n", mac->id, mode, phy_modes(state->interface), mcr, state->pause);
 
+	return;
+
+err_phy:
+	dev_err(eth->dev, "%s: GMAC%d mode %s not supported!\n", __func__, mac->id, phy_modes(state->interface));
 	return;
 }
 
@@ -299,7 +350,7 @@ static int mtk_mac_link_state(struct net_device *ndev,
 
 	pr_warn("mtk_mac_link_state: pmsr:%x\n", pmsr);
 
-	return 0;
+	return 1;
 }
 
 static void mtk_mac_an_restart(struct net_device *ndev)
@@ -373,59 +424,6 @@ static const struct phylink_mac_ops mtk_phylink_ops = {
 	.mac_link_down = mtk_mac_link_down,
 	.mac_link_up = mtk_mac_link_up,
 };
-
-static int mtk_phy_connect(struct net_device *dev)
-{
-	struct mtk_mac *mac = netdev_priv(dev);
-	struct mtk_eth *eth;
-	struct device_node *np = mac->of_node;
-	u32 val;
-
-	eth = mac->hw;
-
-	mac->ge_mode = 0;
-	switch (of_get_phy_mode(np)) {
-	case PHY_INTERFACE_MODE_TRGMII:
-		mac->trgmii = true;
-	case PHY_INTERFACE_MODE_RGMII_TXID:
-	case PHY_INTERFACE_MODE_RGMII_RXID:
-	case PHY_INTERFACE_MODE_RGMII_ID:
-	case PHY_INTERFACE_MODE_RGMII:
-		break;
-	case PHY_INTERFACE_MODE_SGMII:
-		if (MTK_HAS_CAPS(eth->soc->caps, MTK_SGMII))
-			mtk_gmac_sgmii_hw_setup(eth, mac->id);
-		break;
-	case PHY_INTERFACE_MODE_MII:
-		mac->ge_mode = 1;
-		break;
-	case PHY_INTERFACE_MODE_REVMII:
-		mac->ge_mode = 2;
-		break;
-	case PHY_INTERFACE_MODE_RMII:
-		if (!mac->id)
-			goto err_phy;
-		mac->ge_mode = 3;
-		break;
-	default:
-		goto err_phy;
-	}
-
-	/* put the gmac into the right mode */
-	regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
-	val &= ~SYSCFG0_GE_MODE(SYSCFG0_GE_MASK, mac->id);
-	val |= SYSCFG0_GE_MODE(mac->ge_mode, mac->id);
-	regmap_write(eth->ethsys, ETHSYS_SYSCFG0, val);
-
-	of_node_put(np);
-
-	return 0;
-
-err_phy:
-	of_node_put(np);
-	dev_err(eth->dev, "%s: invalid phy\n", __func__);
-	return -EINVAL;
-}
 
 static int mtk_mdio_init(struct mtk_eth *eth)
 {
@@ -2011,15 +2009,6 @@ static int mtk_hw_init(struct mtk_eth *eth)
 	ethsys_reset(eth, RSTCTRL_FE);
 	ethsys_reset(eth, RSTCTRL_PPE);
 
-	regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
-	for (i = 0; i < MTK_MAC_COUNT; i++) {
-		if (!eth->mac[i])
-			continue;
-		val &= ~SYSCFG0_GE_MODE(SYSCFG0_GE_MASK, eth->mac[i]->id);
-		val |= SYSCFG0_GE_MODE(eth->mac[i]->ge_mode, eth->mac[i]->id);
-	}
-	regmap_write(eth->ethsys, ETHSYS_SYSCFG0, val);
-
 	if (eth->pctl) {
 		/* Set GE2 driving and slew rate */
 		regmap_write(eth->pctl, GPIO_DRV_SEL10, 0xa00);
@@ -2064,7 +2053,7 @@ static int mtk_hw_init(struct mtk_eth *eth)
 	mtk_w32(eth, MTK_RX_DONE_INT, MTK_QDMA_INT_GRP2);
 	mtk_w32(eth, 0x21021000, MTK_FE_INT_GRP);
 
-	for (i = 0; i < 2; i++) {
+	for (i = 0; i < MTK_MAC_COUNT; i++) {
 		u32 val = mtk_r32(eth, MTK_GDMA_FWD_CFG(i));
 
 		/* setup the forward port to send frame to PDMA */
@@ -2116,7 +2105,7 @@ static int __init mtk_init(struct net_device *dev)
 			dev->dev_addr);
 	}
 
-	return mtk_phy_connect(dev);
+	return 0;
 }
 
 static void mtk_uninit(struct net_device *dev)
@@ -2500,6 +2489,9 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 		err = -EINVAL;
 		goto free_netdev;
 	}
+
+	/* mac config is not set */
+	mac->interface = PHY_INTERFACE_MODE_NA;
 
 	phylink = phylink_create(eth->netdev[id], of_fwnode_handle(mac->of_node),
 				 phy_mode, &mtk_phylink_ops);
