@@ -125,19 +125,22 @@
 			pause;
 		};
 	};
-/*
+
 	gmac1: mac@1 {
 		compatible = "mediatek,eth-mac";
 		mtd-mac-address = <&factory 0x22>;
 		reg = <1>;
-		phy-mode = "rgmii-id";
-		phy-handle = <&ephy5>;
+		//phy-mode = "rgmii-rxid";
+		phy-handle = <&ephy4>;
 	};
-*/
 
 	mdio: mdio-bus {
 		#address-cells = <1>;
 		#size-cells = <0>;
+
+		ephy4: ethernet-phy@4 {
+			reg = <4>;
+		};
 
 		mt7530: switch@0 {
 			compatible = "mediatek,mt7621";

@@ -265,6 +265,7 @@ enum mt7530_vlan_port_attr {
 
 /* Register for hw trap modification */
 #define MT7530_MHWTRAP			0x7804
+#define  MHWTRAP_PHY0_SEL		BIT(20)
 #define  MHWTRAP_MANUAL			BIT(16)
 #define  MHWTRAP_P5_MAC_SEL		BIT(13)
 #define  MHWTRAP_P6_DIS			BIT(8)

@@ -33,6 +33,10 @@
 
 #include "mt7530.h"
 
+#define PHY_INTERFACE_MODE_RGMII_INTERNAL_P0_AN	2000
+#define PHY_INTERFACE_MODE_RGMII_INTERNAL_P4_AN	2001
+#define PHY_INTERFACE_MODE_RGMII_AN		2002
+
 /* String, offset, and register size in bytes if different from 4 bytes */
 static const struct mt7530_mib_desc mt7530_mib[] = {
 	MIB_DESC(1, 0x00, "TxDrop"),
@@ -689,45 +693,63 @@ static void mt7530_adjust_link(struct dsa_switch *ds, int port,
 void mt7530_setup_port5(struct mt7530_priv *priv)
 {
 	/* Enable and setup Port 5; */
-	int val;
+
+	int val, hwtrap;
 	mutex_lock(&priv->reg_mutex);
 
-	val = mt7530_read(priv, MT7530_MHWTRAP);
+	hwtrap = mt7530_read(priv, MT7530_MHWTRAP);
 
-	val |= MHWTRAP_MANUAL | MHWTRAP_P5_MAC_SEL;
+	hwtrap |= MHWTRAP_MANUAL | MHWTRAP_P5_MAC_SEL | MHWTRAP_P5_DIS;
 
-	val &= ~MHWTRAP_P5_RGMII_MODE & ~MHWTRAP_P5_DIS;
+	hwtrap &= ~MHWTRAP_P5_RGMII_MODE & ~MHWTRAP_P5_DIS & ~MHWTRAP_PHY0_SEL;
 
-	if (phy_interface_mode_is_rgmii( priv->p5_interface ) ||
-	    priv->p5_interface == PHY_INTERFACE_MODE_INTERNAL ) 
-		val |= MHWTRAP_P5_RGMII_MODE;
+	switch (priv->p5_interface) {
+	case PHY_INTERFACE_MODE_RGMII_INTERNAL_P0_AN:
+		hwtrap |= MHWTRAP_PHY0_SEL;
+		/* fall-thru */
+	case PHY_INTERFACE_MODE_RGMII_INTERNAL_P4_AN:
+		hwtrap &= ~MHWTRAP_P5_MAC_SEL & ~MHWTRAP_P5_DIS; 
+		hwtrap |= MHWTRAP_P5_RGMII_MODE;
 
-	if (priv->p5_interface == PHY_INTERFACE_MODE_INTERNAL)
-		val &= ~MHWTRAP_P5_MAC_SEL; 
 
-	mt7530_write(priv, MT7530_MHWTRAP, val);
-
-	pr_warn("Setup P5 HWTRAP: %x, phy-mode: %s\n", val, phy_modes(priv->p5_interface));
-
-	if (priv->p5_interface == PHY_INTERFACE_MODE_INTERNAL) {
 		/* P5 RGMII TX Clock Control, delay 4 */
 		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x14));
 
 		/* P5 RGMII RX Clock Control: delay setting for 1000M */
-		val = CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2);
+		hwtrap = CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2);
 		mt7530_write(priv, MT7530_P5RGMIIRXCR, val);
 
 		/* Setup the MAC by default for the cpu port */
-		mt7530_write(priv, MT7530_PMCR_P(5), 0x76300);
+		mt7530_write(priv, MT7530_PMCR_P(5), 0x56300);
+		
+		pr_warn("Setup P5 HWTRAP: %x, phy-mode: PHY P%d\n", hwtrap, priv->p5_interface==PHY_INTERFACE_MODE_RGMII_INTERNAL_P0_AN ? 0 : 4);
+		break;
+	case PHY_INTERFACE_MODE_RGMII:
+	case PHY_INTERFACE_MODE_RGMII_RXID:
+	case PHY_INTERFACE_MODE_RGMII_TXID:
+	case PHY_INTERFACE_MODE_RGMII_ID:
+		hwtrap |= MHWTRAP_P5_RGMII_MODE;
 
-	} else {
 		/* P5 RGMII TX Clock Control, delay 0 */
 		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x14));
 
 		/* P5 RGMII RX Clock Control: delay setting for 1000M */
 		val = CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2);
 		mt7530_write(priv, MT7530_P5RGMIIRXCR, val);
+
+		pr_warn("Setup P5 HWTRAP: %x, phy-mode: %s\n", hwtrap, phy_modes(priv->p5_interface));
+		break;
+	case PHY_INTERFACE_MODE_RGMII_AN:
+		mt7530_write(priv, MT7530_PMCR_P(5), 0x76300);
+		pr_warn("Setup P5 HWTRAP: %x, phy-mode: RGMII_AN EPHY\n", hwtrap);
+	default:
+		pr_warn("%s: Unsupported p5_interface: %d\n", __func__, priv->p5_interface);
+		mutex_unlock(&priv->reg_mutex);
+		return;
+		break;
 	}
+
+	mt7530_write(priv, MT7530_MHWTRAP, val);
 
 	/* reduce P5 RGMII Tx driving, 8mA*/
 	val = P5_IO_CLK_DRV(1) | P5_IO_DATA_DRV(1);
@@ -1303,6 +1325,9 @@ mt7530_setup(struct dsa_switch *ds)
 	 * as two netdev instances.
 	 */
 	dn = ds->ports[MT7530_CPU_PORT].master->dev.of_node->parent;
+	priv->ethernet = syscon_node_to_regmap(dn);
+	if (IS_ERR(priv->ethernet))
+		return PTR_ERR(priv->ethernet);
 
 	if (priv->id == ID_MT7530) {
 		priv->ethernet = syscon_node_to_regmap(dn);
@@ -1366,9 +1391,9 @@ mt7530_setup(struct dsa_switch *ds)
 	val |= MHWTRAP_MANUAL;
 	mt7530_write(priv, MT7530_MHWTRAP, val);
 
-	/* HACK: Enable DSA ph4 to P5 and 2nd GMAC */
-	// priv->p5_interface =PHY_INTERFACE_MODE_INTERNAL;
-	// mt7530_setup_port5(priv);
+	/* HACK: Enable P0 via P5 to 2nd GMAC */
+	priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P4_AN;
+	mt7530_setup_port5(priv);
 
 	/* Enable and reset MIB counters */
 	mt7530_mib_reset(ds);
