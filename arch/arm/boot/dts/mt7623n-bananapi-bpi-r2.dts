@@ -145,17 +145,17 @@
 
 	gmac1: mac@1 {
 		compatible = "mediatek,eth-mac";
-		reg = <0>;
+		reg = <1>;
 		phy-mode = "rgmii";
-		phy-handle = <&phy0>;
+		phy-handle = <&ephy4>;
 	};
 
 	mdio: mdio-bus {
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		phy0: ethernet-phy@0 {
-			reg = <0>;
+		ephy4: ethernet-phy@4 {
+			reg = <4>;
 		};
 
 		switch@0 {
@@ -169,32 +169,32 @@
 				#address-cells = <1>;
 				#size-cells = <0>;
 
-/*
 				port@0 {
 					reg = <0>;
-					label = "wan";
+					label = "lan0";
 				};
-*/
 
 				port@1 {
 					reg = <1>;
-					label = "lan0";
+					label = "lan1";
 				};
 
 				port@2 {
 					reg = <2>;
-					label = "lan1";
+					label = "lan2";
 				};
 
 				port@3 {
 					reg = <3>;
-					label = "lan2";
-				};
-
-				port@4 {
-					reg = <4>;
 					label = "lan3";
 				};
+
+/* Disables, is now handled by gmac1 via phy-handle!
+				port@4 {
+					reg = <4>;
+					label = "lan4";
+				};
+*/
 
 				port@6 {
 					reg = <6>;
