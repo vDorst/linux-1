@@ -2167,16 +2167,6 @@ static void mtk_pending_work(struct work_struct *work)
 				     eth->dev->pins->default_state);
 	mtk_hw_init(eth);
 
-	for (i = 0; i < MTK_MAC_COUNT; i++) {
-		if (!eth->mac[i] ||
-		    of_phy_is_fixed_link(eth->mac[i]->of_node))
-			continue;
-		err = phy_init_hw(eth->netdev[i]->phydev);
-		if (err)
-			dev_err(eth->dev, "%s: PHY init failed.\n",
-				eth->netdev[i]->name);
-	}
-
 	/* restart DMA and enable IRQs */
 	for (i = 0; i < MTK_MAC_COUNT; i++) {
 		if (!test_bit(i, &restart))
