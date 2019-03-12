@@ -638,8 +638,8 @@ static void mt7530_adjust_link(struct dsa_switch *ds, int port,
 		dev_dbg(priv->dev, "phy-mode for master device = %x\n",
 			phydev->interface);
 
-			/* Setup TX circuit incluing relevant PAD and driving */
-			mt7530_pad_clk_setup(ds, phydev->interface);
+		/* Setup TX circuit incluing relevant PAD and driving */
+		mt7530_pad_clk_setup(ds, phydev->interface);
 
 		if (priv->id == ID_MT7530) {
 			/* Setup RX circuit, relevant PAD and driving on the
