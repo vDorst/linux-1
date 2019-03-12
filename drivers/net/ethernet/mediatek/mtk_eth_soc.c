@@ -386,13 +386,12 @@ static void mtk_validate(struct net_device *ndev, unsigned long *supported,
 {
 	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
 
-	pr_warn("mtk_validate: %s\n", phy_modes(state->interface));
-
 	/* We only support QSGMII, SGMII, 802.3z and RGMII modes */
 	if (state->interface != PHY_INTERFACE_MODE_NA &&
 	    state->interface != PHY_INTERFACE_MODE_TRGMII &&
 	    !phy_interface_mode_is_rgmii(state->interface)) {
 		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
+		pr_warn("mtk_validate: UNSUPPORTED!:%s\n", phy_modes(state->interface));
 		return;
 	}
 
@@ -414,6 +413,8 @@ static void mtk_validate(struct net_device *ndev, unsigned long *supported,
 		   __ETHTOOL_LINK_MODE_MASK_NBITS);
 	bitmap_and(state->advertising, state->advertising, mask,
 		   __ETHTOOL_LINK_MODE_MASK_NBITS);
+
+	pr_warn("mtk_validate: %s\n", phy_modes(state->interface));
 }
 
 static const struct phylink_mac_ops mtk_phylink_ops = {
@@ -2491,7 +2492,7 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	}
 
 	mac->phylink = phylink;
-	dev_err(eth->dev, "GM%d: phymode: %s\n", id, phy_modes(phy_mode));
+	dev_err(eth->dev, "added GMAC%d phymode: %s\n", id, phy_modes(phy_mode));
 
 	SET_NETDEV_DEV(eth->netdev[id], eth->dev);
 	eth->netdev[id]->watchdog_timeo = 5 * HZ;
