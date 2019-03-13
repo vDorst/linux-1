@@ -690,27 +690,53 @@ static void mt7530_adjust_link(struct dsa_switch *ds, int port,
 	}
 }
 
+#define EPHY_ADDR 0x07
 void mt7530_setup_port5(struct mt7530_priv *priv)
 {
 	/* Enable and setup Port 5; */
 
-	int val;
+	struct mii_bus *bus = priv->bus;
+	int val, ret;
+
 	mutex_lock(&priv->reg_mutex);
 
 	val = mt7530_read(priv, MT7530_MHWTRAP);
 
-	val |= MHWTRAP_MANUAL | MHWTRAP_P5_MAC_SEL;
+	val |= MHWTRAP_MANUAL | MHWTRAP_P5_MAC_SEL | MHWTRAP_P5_DIS;
 
-	val &= ~MHWTRAP_P5_RGMII_MODE & ~MHWTRAP_P5_DIS & ~MHWTRAP_PHY0_SEL;
+	val &= ~MHWTRAP_P5_RGMII_MODE & ~MHWTRAP_PHY0_SEL;
 
 	switch (priv->p5_interface) {
+	/* MT7530_P5_MODE_GPHY_P0: 2nd GMAC -> P5 -> P0 */
 	case PHY_INTERFACE_MODE_RGMII_INTERNAL_P0_AN:
 		val |= MHWTRAP_PHY0_SEL;
 		/* fall-thru */
+
+	/* MT7530_P5_MODE_GPHY_P4: 2nd GMAC -> P5 -> P4 */
 	case PHY_INTERFACE_MODE_RGMII_INTERNAL_P4_AN:
 		val &= ~MHWTRAP_P5_MAC_SEL & ~MHWTRAP_P5_DIS; 
 		val |= MHWTRAP_P5_RGMII_MODE;
 
+#ifdef CONFIG_DTB_UBNT_ERX_SFP
+		/* On the UBNT, ephy and P5 both on the RGMII bus to the 2nd GMAC
+		 * Put external phy is powerdown and isolate mode.
+		 */
+		ret = bus->read(bus, EPHY_ADDR, MII_BMCR);
+		if (ret < 0) {
+			dev_err(&bus->dev,
+				"failed to read phy %x register\n", EPHY_ADDR);
+		} else {
+			/* put external phy is powerdown and isolate the RGMII pins */
+			ret |= BMCR_PDOWN | BMCR_ISOLATE;
+			ret = bus->write(bus, EPHY_ADDR, MII_BMCR, ret);
+			if (ret < 0) {
+				dev_err(&bus->dev,
+					"failed to write phy 0x07 register\n");
+			} else {
+				ret = bus->read(bus, EPHY_ADDR, MII_BMCR);
+			}
+		}
+#endif
 
 		/* P5 RGMII TX Clock Control, delay 4 */
 		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x14));
@@ -724,6 +750,8 @@ void mt7530_setup_port5(struct mt7530_priv *priv)
 		
 		pr_warn("Setup P5 HWTRAP: 0x%x, phy-mode: PHY P%d\n", val, priv->p5_interface==PHY_INTERFACE_MODE_RGMII_INTERNAL_P0_AN ? 0 : 4);
 		break;
+
+	/* MT7530_P5_MODE_GMAC: External PHY -> P5. 2nd GMAC not used */
 	case PHY_INTERFACE_MODE_RGMII:
 	case PHY_INTERFACE_MODE_RGMII_RXID:
 	case PHY_INTERFACE_MODE_RGMII_TXID:
@@ -731,7 +759,7 @@ void mt7530_setup_port5(struct mt7530_priv *priv)
 		val |= MHWTRAP_P5_RGMII_MODE;
 
 		/* P5 RGMII TX Clock Control, delay 0 */
-		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x14));
+		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x10));
 
 		/* P5 RGMII RX Clock Control: delay setting for 1000M */
 		mt7530_write(priv, MT7530_P5RGMIIRXCR,
@@ -739,20 +767,38 @@ void mt7530_setup_port5(struct mt7530_priv *priv)
 
 		pr_warn("Setup P5 HWTRAP: %x, phy-mode: %s\n", val, phy_modes(priv->p5_interface));
 		break;
+
+	/* RAETH_GMAC2 GE2_RGMII_AN: External PHY -> P5 -> 2nd GMAC */
 	case PHY_INTERFACE_MODE_RGMII_AN:
-		val |= MHWTRAP_P5_DIS;
-		// val &= ~MHWTRAP_P5_DIS;
-		val |= MHWTRAP_P5_RGMII_MODE;
+		val |= MHWTRAP_P5_DIS | MHWTRAP_P5_MAC_SEL | MHWTRAP_P5_RGMII_MODE;
 		mt7530_write(priv, MT7530_PMCR_P(5), 0x56300); // NOT WORKING YET!
 
 		/* P5 RGMII TX Clock Control, delay 0 */
-		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x14));
+		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x10));
 
 		/* P5 RGMII RX Clock Control: delay setting for 1000M */
 		mt7530_write(priv, MT7530_P5RGMIIRXCR,
 			     CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2));
 
+#ifdef CONFIG_DTB_UBNT_ERX_SFP
+		/* On the UBNT, Reset ephy when changing the RGMII pin modes. */
+		ret = bus->read(bus, EPHY_ADDR, MII_BMCR);
+		if (ret < 0) {
+			dev_err(&bus->dev,
+				"failed to read phy %x register\n", EPHY_ADDR);
+		} else {
+			ret |= BMCR_RESET;
+			ret = bus->write(bus, EPHY_ADDR, MII_BMCR, ret);
+			if (ret < 0) {
+				dev_err(&bus->dev,
+					"failed to write phy 0x07 register\n");
+			} else {
+				ret = bus->read(bus, EPHY_ADDR, MII_BMCR);
+			}
+		}
+#endif
 		pr_warn("Setup P5 HWTRAP: %x, phy-mode: RGMII_AN EPHY\n", val);
+
 		break;
 	default:
 		pr_warn("%s: Unsupported p5_interface: %d\n", __func__, priv->p5_interface);
@@ -763,9 +809,8 @@ void mt7530_setup_port5(struct mt7530_priv *priv)
 
 	mt7530_write(priv, MT7530_MHWTRAP, val);
 
-	/* reduce P5 RGMII Tx driving, 8mA*/
-	val = P5_IO_CLK_DRV(1) | P5_IO_DATA_DRV(1);
-	mt7530_write(priv, MT7530_IO_DRV_CR, val);
+	/* reduce P5 RGMII Tx driving, 8mA, 0x7810 = 0x11 */
+	mt7530_write(priv, MT7530_IO_DRV_CR, P5_IO_CLK_DRV(1) | P5_IO_DATA_DRV(1));
 
 	mutex_unlock(&priv->reg_mutex);
 }
@@ -1407,7 +1452,10 @@ mt7530_setup(struct dsa_switch *ds)
 	mt7530_write(priv, MT7530_MHWTRAP, val);
 
 	/* HACK: Enable P0 via P5 to 2nd GMAC */
-	priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P4_AN;
+	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII_AN; // P5 disabled and External PHY to 2nd GMAC
+	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P0_AN; // Connects P0 to P5
+	priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P4_AN; // Connects P4 to P5
+	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII; // Connects external PHY to P5, 2nd GMAC not used
 	mt7530_setup_port5(priv);
 
 	/* Enable and reset MIB counters */
