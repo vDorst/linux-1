@@ -687,7 +687,7 @@ static void mt7530_adjust_link(struct dsa_switch *ds, int port,
 	}
 }
 
-void mt7530_setup_port5(struct mt7530_priv *priv)
+static void mt7530_setup_port5(struct mt7530_priv *priv)
 {
 	/* Enable and setup Port 5; */
 	int val;
@@ -1600,7 +1600,7 @@ mt7530_phylink_mac_link_state(struct dsa_switch *ds, int port,
 	return 1;
 }
 
-u32 mt7530_get_phy_flags(struct dsa_switch *ds, int port)
+static u32 mt7530_get_phy_flags(struct dsa_switch *ds, int port)
 {
 	pr_warn("%s: P%d\n", __func__, port);
 	if ((port >= 0) && (port <= 4))
