@@ -1453,8 +1453,8 @@ mt7530_setup(struct dsa_switch *ds)
 
 	/* HACK: Enable P0 via P5 to 2nd GMAC */
 	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII_AN; // P5 disabled and External PHY to 2nd GMAC
-	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P0_AN; // Connects P0 to P5
-	priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P4_AN; // Connects P4 to P5
+	priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P0_AN; // Connects P0 to P5
+	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P4_AN; // Connects P4 to P5
 	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII; // Connects external PHY to P5, 2nd GMAC not used
 	mt7530_setup_port5(priv);
 

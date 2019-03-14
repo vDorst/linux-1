@@ -138,15 +138,15 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		ephy0: ethernet-phy@4 {
-			reg = <4>;
+		ephy0: ethernet-phy@0 {
+			reg = <0>;
 		};
 
-		mt7530: switch@0 {
+		mt7530: switch@1 {
 			compatible = "mediatek,mt7621";
 			#address-cells = <1>;
 			#size-cells = <0>;
-			reg = <0>;
+			reg = <1>;
 			pinctrl-names = "default";
 			mediatek,mcm;
 
@@ -157,10 +157,12 @@
 				#address-cells = <1>;
 				#size-cells = <0>;
 
+/*
 				port@0 {
 					reg = <0>;
 					label = "lan0";
 				};
+*/
 
 				port@1 {
 					reg = <1>;
@@ -177,12 +179,10 @@
 					label = "lan3";
 				};
 
-/*
 				port@4 {
 					reg = <4>;
 					label = "lan4";
 				};
-*/
 
 				cpu_port0: port@6 {
 					reg = <6>;
