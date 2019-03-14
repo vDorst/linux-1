@@ -281,6 +281,14 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 		val |= SYSCFG0_GE_MODE(ge_mode, mac->id);
 		regmap_write(eth->ethsys, ETHSYS_SYSCFG0, val);
 
+		/* put GPIO in the right mode */
+		regmap_read(eth->ethsys, SYSC_GPIO_MODE, &val);
+		if (mac->id)
+			val &= ~GMAC2_GPIO_MODE;
+		else
+			val &= ~GMAC1_GPIO_MODE;
+		regmap_write(eth->ethsys, SYSC_GPIO_MODE, val);
+
 		mac->interface = state->interface;
 		pr_warn("mtk_mac_config_hw: GMAC%d: mode %s\n", mac->id, phy_modes(state->interface));
 	}

@@ -419,6 +419,12 @@
 #define SGMSYS_QPHY_PWR_STATE_CTRL 0xe8
 #define	SGMII_PHYA_PWD		BIT(4)
 
+/* Register to GPIO mode */
+#define SYSC_GPIO_MODE		0x60
+#define GMAC2_GPIO_MODE		BIT(15)
+#define GMAC1_GPIO_MODE		BIT(14)
+
+
 struct mtk_rx_dma {
 	unsigned int rxd1;
 	unsigned int rxd2;
