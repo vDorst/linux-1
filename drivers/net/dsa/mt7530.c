@@ -627,66 +627,6 @@ mt7530_get_sset_count(struct dsa_switch *ds, int port, int sset)
 	return ARRAY_SIZE(mt7530_mib);
 }
 
-static void mt7530_adjust_link(struct dsa_switch *ds, int port,
-			       struct phy_device *phydev)
-{
-	struct mt7530_priv *priv = ds->priv;
-
-	dev_info(priv->dev, "mt7530_adjust_link: P%d phy-mode %s\n", port, phy_modes(phydev->interface));
-
-	if (phy_is_pseudo_fixed_link(phydev)) {
-		dev_dbg(priv->dev, "phy-mode for master device = %x\n",
-			phydev->interface);
-
-		/* Setup TX circuit incluing relevant PAD and driving */
-		mt7530_pad_clk_setup(ds, phydev->interface);
-
-
-		if (priv->id == ID_MT7530) {
-			/* Setup RX circuit, relevant PAD and driving on the
-			 * host which must be placed after the setup on the
-			 * device side is all finished.
-			 */
-			mt7623_pad_clk_setup(ds);
-		}
-	} else {
-		u16 lcl_adv = 0, rmt_adv = 0;
-		u8 flowctrl;
-		u32 mcr = PMCR_USERP_LINK | PMCR_FORCE_MODE;
-
-		switch (phydev->speed) {
-		case SPEED_1000:
-			mcr |= PMCR_FORCE_SPEED_1000;
-			break;
-		case SPEED_100:
-			mcr |= PMCR_FORCE_SPEED_100;
-			break;
-		}
-
-		if (phydev->link)
-			mcr |= PMCR_FORCE_LNK;
-
-		if (phydev->duplex) {
-			mcr |= PMCR_FORCE_FDX;
-
-			if (phydev->pause)
-				rmt_adv = LPA_PAUSE_CAP;
-			if (phydev->asym_pause)
-				rmt_adv |= LPA_PAUSE_ASYM;
-
-			lcl_adv = linkmode_adv_to_lcl_adv_t(
-				phydev->advertising);
-			flowctrl = mii_resolve_flowctrl_fdx(lcl_adv, rmt_adv);
-
-			if (flowctrl & FLOW_CTRL_TX)
-				mcr |= PMCR_TX_FC_EN;
-			if (flowctrl & FLOW_CTRL_RX)
-				mcr |= PMCR_RX_FC_EN;
-		}
-		mt7530_write(priv, MT7530_PMCR_P(port), mcr);
-	}
-}
-
 static void mt7530_setup_port5(struct mt7530_priv *priv)
 {
 	/* Enable and setup Port 5; */
@@ -1430,13 +1370,22 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 		    state->interface != PHY_INTERFACE_MODE_TRGMII)
 			goto unsupported;
 		break;
+		/* Setup TX circuit incluing relevant PAD and driving */
+		mt7530_pad_clk_setup(ds, state->interface);
+
+		if (priv->id == ID_MT7530) {
+			/* Setup RX circuit, relevant PAD and driving on the
+			 * host which must be placed after the setup on the
+			 * device side is all finished.
+			 */
+			mt7623_pad_clk_setup(ds);
+		}
 	default:
 		dev_err(ds->dev, "Unsupported port: %i\n", port);
 		return;
 	}
 
-
-	if (!state->an_enabled) {
+	if (!state->an_enabled || mode == MLO_AN_FIXED) {
 		mcr |= PMCR_FORCE_MODE;
 
 		if (state->speed == SPEED_1000)
@@ -1445,8 +1394,10 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 			mcr |= PMCR_FORCE_SPEED_100;
 		if (state->duplex == DUPLEX_FULL)
 			mcr |= PMCR_FORCE_FDX;
-		if (state->link)
+		if (state->link || mode == MLO_AN_FIXED)
 			mcr |= PMCR_FORCE_LNK;
+		if ((state->pause) || (phylink_test(state->advertising, Pause)))
+			mcr |= PMCR_TX_FC_EN | PMCR_RX_FC_EN;
 		if (state->pause & MLO_PAUSE_TX)
 			mcr |= PMCR_TX_FC_EN;
 		if (state->pause & MLO_PAUSE_RX)
@@ -1606,6 +1557,32 @@ static u32 mt7530_get_phy_flags(struct dsa_switch *ds, int port)
 	if ((port >= 0) && (port <= 4))
 		return PHY_IS_INTERNAL;
 	return 0;
+}
+
+static void mt7530_adjust_link(struct dsa_switch *ds, int port,
+			       struct phy_device *phydev)
+{
+	struct mt7530_priv *priv = ds->priv;
+
+	struct phylink_link_state state;
+	unsigned int mode = MLO_AN_PHY;
+
+	if (phy_is_pseudo_fixed_link(phydev))
+		mode = MLO_AN_FIXED;
+
+	linkmode_copy(state.advertising, phydev->advertising);
+	linkmode_copy(state.lp_advertising,phydev->lp_advertising);
+	state.speed = phydev->speed;
+	state.duplex = phydev->duplex;
+	state.pause = phydev->pause;
+	state.link = phydev->link;
+	state.an_enabled = phydev->autoneg;
+	state.an_complete = phydev->link;
+	state.interface = phydev->interface;
+
+	dev_info(priv->dev, "mt7530_adjust_link: P%d phy-mode %s\n", port, phy_modes(state.interface));
+
+	mt7530_phylink_mac_config(ds, port, mode, &state);
 }
 
 static const struct dsa_switch_ops mt7530_switch_ops = {
