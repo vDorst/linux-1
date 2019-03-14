@@ -286,7 +286,7 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 	}
 
 	/* Setup mac */
-	if (!state->an_enabled) {
+	if (!state->an_enabled || mode == MLO_AN_FIXED) {
 		mcr |= MAC_MCR_FORCE_MODE;
 		if (state->speed == SPEED_1000)
 			mcr |= MAC_MCR_SPEED_1000;
@@ -294,9 +294,9 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 			mcr |= MAC_MCR_SPEED_100;
 		if (state->duplex == DUPLEX_FULL)
 			mcr |= MAC_MCR_FORCE_DPX;
-		if (state->link)
+		if (state->link || mode == MLO_AN_FIXED)
 			mcr |= MAC_MCR_FORCE_LINK;
-		if (state->pause)
+		if ((state->pause) || (phylink_test(state->advertising, Pause)))
 			mcr |= MAC_MCR_FORCE_TX_FC | MAC_MCR_FORCE_RX_FC;
 		if (state->pause & MLO_PAUSE_TX)
 			mcr |= MAC_MCR_FORCE_TX_FC;
