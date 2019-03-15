@@ -738,12 +738,19 @@ void mt7530_setup_port5(struct mt7530_priv *priv)
 		}
 #endif
 
-		/* P5 RGMII TX Clock Control, delay 4 */
-		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x14));
-
-		/* P5 RGMII RX Clock Control: delay setting for 1000M */
-		mt7530_write(priv, MT7530_P5RGMIIRXCR,
-			     CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2));
+		if (priv->id == ID_MT7621) {
+			/* P5 RGMII RX Clock Control: delay setting for 1000M */
+			mt7530_write(priv, MT7530_P5RGMIIRXCR,
+				     CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2));
+			/* P5 RGMII TX Clock Control [0x7b04]: delay 4 */
+			mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x14));
+		} else { /* priv->id == ID_MT7623 */
+			/* P5 RGMII RX Clock Control [0x7b00]: delay setting for 1000M */
+			mt7530_write(priv, MT7530_P5RGMIIRXCR,
+				     CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(4));
+			/* P5 RGMII TX Clock Control [0x7b04]: delay 0 */
+			mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x10));
+		}
 
 		/* Setup the MAC by default for the cpu port */
 		mt7530_write(priv, MT7530_PMCR_P(5), 0x56300);
