@@ -2446,9 +2446,9 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 		return -EINVAL;
 	}
 
-	eth->netdev[id] = alloc_etherdev(sizeof(*mac));
+	eth->netdev[id] = devm_alloc_etherdev(eth->dev, sizeof(*mac));
 	if (!eth->netdev[id]) {
-		dev_err(eth->dev, "alloc_etherdev failed\n");
+		dev_err(eth->dev, "devm_alloc_etherdev failed\n");
 		return -ENOMEM;
 	}
 	mac = netdev_priv(eth->netdev[id]);
