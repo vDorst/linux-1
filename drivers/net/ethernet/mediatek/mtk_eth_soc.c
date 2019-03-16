@@ -399,7 +399,7 @@ static void mtk_validate(struct net_device *ndev, unsigned long *supported,
 	    state->interface != PHY_INTERFACE_MODE_TRGMII &&
 	    !phy_interface_mode_is_rgmii(state->interface)) {
 		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
-		pr_warn("mtk_validate: UNSUPPORTED!:%s\n", phy_modes(state->interface));
+		pr_warn("mtk_validate: unsupported interface!:%s\n", phy_modes(state->interface));
 		return;
 	}
 
