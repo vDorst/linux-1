@@ -1941,8 +1941,11 @@ static int mtk_stop(struct net_device *dev)
 	struct mtk_mac *mac = netdev_priv(dev);
 	struct mtk_eth *eth = mac->hw;
 
-	netif_tx_disable(dev);
 	phylink_stop(mac->phylink);
+
+	netif_tx_disable(dev);
+
+	phylink_disconnect_phy(mac->phylink);
 
 	/* only shutdown DMA if this is the last user */
 	if (!refcount_dec_and_test(&eth->dma_refcnt))
