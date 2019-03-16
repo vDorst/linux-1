@@ -1342,8 +1342,8 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 	case 2:
 	case 3:
 	case 4:
-		if (state->interface != PHY_INTERFACE_MODE_INTERNAL && 
-			state->interface != PHY_INTERFACE_MODE_GMII)
+		if (state->interface != PHY_INTERFACE_MODE_INTERNAL &&
+		    state->interface != PHY_INTERFACE_MODE_GMII)
 			goto unsupported;
 		break;
 	case 5: /* 2nd cpu port with phy of port 0 or 4 / external phy */
@@ -1375,7 +1375,7 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 			mt7623_pad_clk_setup(ds);
 		}
 	default:
-		dev_err(ds->dev, "Unsupported port: %i\n", port);
+		dev_err(ds->dev, "%s: Unsupported port: %i\n", __func__, port);
 		return;
 	}
 
@@ -1400,12 +1400,14 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 
 	mt7530_write(priv, MT7530_PMCR_P(port), mcr);
 
-	pr_warn("mt7530_phylink_mac_config P%d, mode: %x, %s, mcr=%x pause=%x\n", port, mode, phy_modes(state->interface),mcr,state->pause);
+	dev_info(ds->dev, "%s: P%d, mode: %x, %s, mcr=%x pause=%x\n", __func__,
+		 port, mode, phy_modes(state->interface), mcr, state->pause);
 
 	return;
 
 unsupported:
-	dev_err(ds->dev, "Unsupported interface: %d\n", state->interface);
+	dev_err(ds->dev, "%s: P%d: Unsupported phy_interface mode: 0x%x (%s)\n",
+		__func__, port, state->interface, phy_modes(state->interface));
 }
 
 static void mt7530_phylink_mac_link_down(struct dsa_switch *ds, int port,
