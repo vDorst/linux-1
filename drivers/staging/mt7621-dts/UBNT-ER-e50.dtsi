@@ -130,8 +130,8 @@
 		compatible = "mediatek,eth-mac";
 		mtd-mac-address = <&factory 0x22>;
 		reg = <1>;
-		phy-mode = "rgmii-id";
-		phy-handle = <&ephy5>;
+		phy-mode = "rgmii";
+		phy-handle = <&phy4>;
 	};
 */
 
@@ -139,11 +139,16 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		mt7530: switch@0 {
+		/* Internal phy */
+		phy4: ethernet-phy@4 {
+			reg = <4>;
+		};
+
+		mt7530: switch@1f {
 			compatible = "mediatek,mt7621";
 			#address-cells = <1>;
 			#size-cells = <0>;
-			reg = <0>;
+			reg = <0x1f>;
 			pinctrl-names = "default";
 			mediatek,mcm;
 
