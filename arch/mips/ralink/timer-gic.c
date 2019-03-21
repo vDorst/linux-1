@@ -8,15 +8,15 @@
 #include <linux/init.h>
 
 #include <linux/of.h>
-#include <linux/of_clk.h>
-#include <linux/clocksource.h>
+#include <linux/clk-provider.h>
+#include <asm/time.h>
 
 #include "common.h"
 
 void __init plat_time_init(void)
 {
 	ralink_of_remap();
-
+	ralink_clk_init();
 	of_clk_init(NULL);
 	timer_probe();
 }
