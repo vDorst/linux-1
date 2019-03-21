@@ -1237,6 +1237,9 @@ mt7530_setup(struct dsa_switch *ds)
 	u32 id, val;
 	struct device_node *dn;
 	struct mt7530_dummy_poll p;
+	struct mii_bus *bus = priv->bus;
+	u8 addr;
+	u8 ephy_addr = 0;
 
 	/* The parent node of master netdev which holds the common system
 	 * controller also is the container for two GMACs nodes representing
@@ -1306,9 +1309,32 @@ mt7530_setup(struct dsa_switch *ds)
 	val |= MHWTRAP_MANUAL;
 	mt7530_write(priv, MT7530_MHWTRAP, val);
 
-	/* HACK: Enable DSA ph4 to P5 and 2nd GMAC */
-	// priv->p5_interface =PHY_INTERFACE_MODE_INTERNAL;
-	// mt7530_setup_port5(priv);
+	priv->p5_interface = PHY_INTERFACE_MODE_NA;
+
+	// Port 5 mode detect
+
+	// Detect external phy address.
+	for (addr = 5; addr < 31; addr++) {
+		if (bus->mdio_map[addr]) {
+			pr_warn("External phy detected @ 0x%x\n", addr);
+			ephy_addr = addr;
+			priv->p5_interface = PHY_INTERFACE_MODE_RGMII_AN;
+		}
+	}
+
+	// Set P0/P4 to P5 if defined as phy.
+	if (bus->mdio_map[0x00])
+		priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P0_AN;
+	if (bus->mdio_map[0x04])
+		priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P4_AN;
+
+	/* HACK: Enable P0 via P5 to 2nd GMAC */
+	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII_AN; // P5 disabled and External PHY to 2nd GMAC
+	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P0_AN; // Connects P0 to P5
+	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P4_AN; // Connects P4 to P5
+	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII; // Connects external PHY to P5, 2nd GMAC not used
+	if (priv->p5_interface != PHY_INTERFACE_MODE_NA)
+		mt7530_setup_port5(priv);
 
 	/* Enable and reset MIB counters */
 	mt7530_mib_reset(ds);
@@ -1565,7 +1591,6 @@ static void mt7530_adjust_link(struct dsa_switch *ds, int port,
 			       struct phy_device *phydev)
 {
 	struct mt7530_priv *priv = ds->priv;
-
 	struct phylink_link_state state;
 	unsigned int mode = MLO_AN_PHY;
 
