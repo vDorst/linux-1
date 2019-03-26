@@ -668,14 +668,14 @@ static void mt7530_setup_port5(struct mt7530_priv *priv, phy_interface_t interfa
 {
 	/* Enable and setup Port 5; */
 	int val;
+	u8 tx_delay = 0;
 
 	mutex_lock(&priv->reg_mutex);
 
 	val = mt7530_read(priv, MT7530_MHWTRAP);
 
-	val |= MHWTRAP_MANUAL | MHWTRAP_P5_MAC_SEL;
-
-	val &= ~MHWTRAP_P5_RGMII_MODE & ~MHWTRAP_P5_DIS;
+	val |= MHWTRAP_MANUAL | MHWTRAP_P5_MAC_SEL | MHWTRAP_P5_DIS;
+	val &= ~MHWTRAP_P5_RGMII_MODE & ~MHWTRAP_PHY0_SEL;
 
 	switch (priv->p5_mode) {
 	case P5_MODE_GPHY_P0:
@@ -685,7 +685,6 @@ static void mt7530_setup_port5(struct mt7530_priv *priv, phy_interface_t interfa
 	case P5_MODE_GPHY_P4:
 		/* MT7530_P5_MODE_GPHY_P4: 2nd GMAC -> P5 -> P4 */
 		val &= ~MHWTRAP_P5_MAC_SEL & ~MHWTRAP_P5_DIS;
-		val |= MHWTRAP_P5_RGMII_MODE;
 
 		/* Isolate external phy */
 		if (priv->p5_ephy_addr)
@@ -694,39 +693,15 @@ static void mt7530_setup_port5(struct mt7530_priv *priv, phy_interface_t interfa
 				goto unlock_exit;
 			}
 
-		if (priv->id == ID_MT7621) {
-			/* P5 RGMII RX Clock Control [0x7b00]: delay setting for 1000M */
-			mt7530_write(priv, MT7530_P5RGMIIRXCR,
-				     CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2));
-			/* P5 RGMII TX Clock Control [0x7b04]: delay 4 */
-			mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x14));
-		} else { /* priv->id == ID_MT7623 */
-			/* P5 RGMII RX Clock Control [0x7b00]: delay setting for 1000M */
-			mt7530_write(priv, MT7530_P5RGMIIRXCR,
-				     CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(4));
-			/* P5 RGMII TX Clock Control [0x7b04]: delay 0 */
-			mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x10));
-		}
-
 		/* Setup the MAC by default for the cpu port */
 		mt7530_write(priv, MT7530_PMCR_P(5), 0x56300);
-
-		pr_warn("Setup P5 HWTRAP: 0x%x, phy-mode: PHY P%d\n", val,
-					priv->p5_mode==P5_MODE_GPHY_P0 ? 0 : 4);
 		break;
 	case P5_MODE_GMAC:
-		/* MT7530_P5_MODE_GMAC: External PHY -> P5. 2nd GMAC not used */
-		val |= MHWTRAP_P5_RGMII_MODE;
+		/* MT7530_P5_MODE_GMAC: P5 -> External phy or 2nd GMAC */
 		val &= ~MHWTRAP_P5_DIS;
-
-		/* P5 RGMII RX Clock Control [0x7b00]: delay setting for 1000M */
-		mt7530_write(priv, MT7530_P5RGMIIRXCR,
-			     CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2));
-
-		/* P5 RGMII TX Clock Control [0x7b04]: delay 4 */
-		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x10));
-
-		pr_warn("Setup P5 HWTRAP: %x, port-mode: GMAC: phy-mode: %s\n", val, phy_modes(interface));
+		break;
+	case P5_MODE_DISABLED:
+		interface = PHY_INTERFACE_MODE_NA;
 		break;
 	default:
 		pr_warn("%s: Unsupported p5_mode %d\n", __func__, priv->p5_mode);
@@ -734,9 +709,28 @@ static void mt7530_setup_port5(struct mt7530_priv *priv, phy_interface_t interfa
 		break;
 	}
 
-	/* reduce P5 RGMII Tx driving, 8mA*/
-	val = P5_IO_CLK_DRV(1) | P5_IO_DATA_DRV(1);
-	mt7530_write(priv, MT7530_IO_DRV_CR, val);
+	/* Setup RGMII settings */
+	if (phy_interface_mode_is_rgmii(interface)) {
+		val |= MHWTRAP_P5_RGMII_MODE;
+
+		/* P5 RGMII RX Clock Control [0x7b00]: delay setting for 1000M */
+		mt7530_write(priv, MT7530_P5RGMIIRXCR, CSR_RGMII_EDGE_ALIGN);
+
+		if (interface == PHY_INTERFACE_MODE_RGMII_TXID ||
+		    interface == PHY_INTERFACE_MODE_RGMII_ID)
+			tx_delay = 4; /* 2 ns */
+
+		/* P5 RGMII TX Clock Control [0x7b04]: delay x */
+		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x10 + tx_delay));
+
+		/* reduce P5 RGMII Tx driving, 8mA, 0x7810 = 0x11 */
+		mt7530_write(priv, MT7530_IO_DRV_CR, P5_IO_CLK_DRV(1) | P5_IO_DATA_DRV(1));
+	}
+
+	mt7530_write(priv, MT7530_MHWTRAP, val);
+
+	pr_warn("Setup P5 HWTRAP: 0x%x: port-mode: %s: phy-mode: %s\n", val,
+				p5_modes(priv->p5_mode), phy_modes(interface));
 
 unlock_exit:
 	mutex_unlock(&priv->reg_mutex);
@@ -807,7 +801,7 @@ mt7530_port_disable(struct dsa_switch *ds, int port)
 {
 	struct mt7530_priv *priv = ds->priv;
 
-	//pr_info("mt7530_port_disable: P%d\n", port);
+	pr_info("mt7530_port_disable: P%d\n", port);
 
 	mutex_lock(&priv->reg_mutex);
 
@@ -820,12 +814,6 @@ mt7530_port_disable(struct dsa_switch *ds, int port)
 	mt7530_port_set_status(priv, port, 0);
 
 	mt7530_write(priv, MT7530_PMCR_P(port), PMCR_FORCE_LNK_DOWN);
-
-	/* Disable port 5 hardware */
-	if (port == 5 && !priv->p5_interface) {
-		mt7530_rmw(priv, MT7530_MHWTRAP, 0, MHWTRAP_MANUAL | MHWTRAP_P5_DIS);
-		priv->p5_interface = PHY_INTERFACE_MODE_NA;
-	}
 
 	mutex_unlock(&priv->reg_mutex);
 }
@@ -1373,6 +1361,22 @@ mt7530_setup(struct dsa_switch *ds)
 	val |= MHWTRAP_MANUAL;
 	mt7530_write(priv, MT7530_MHWTRAP, val);
 
+	/* Enable and reset MIB counters */
+	mt7530_mib_reset(ds);
+
+	mt7530_clear(priv, MT7530_MFC, UNU_FFP_MASK);
+
+	for (i = 0; i < MT7530_NUM_PORTS; i++) {
+		/* Disable forwarding by default on all ports */
+		mt7530_rmw(priv, MT7530_PCR_P(i), PCR_MATRIX_MASK,
+			   PCR_MATRIX_CLR);
+
+		if (dsa_is_cpu_port(ds, i))
+			mt7530_cpu_port_enable(priv, i);
+		else
+			mt7530_port_disable(ds, i);
+	}
+
 	priv->p5_mode = P5_MODE_DISABLED;
 	if (!dsa_is_user_port(ds, 5)) {
 		// Port 5 mode detect when not used as user port.
@@ -1400,24 +1404,10 @@ mt7530_setup(struct dsa_switch *ds)
 		// priv->p5_mode = P5_MODE_GPHY_P0; // Connects P0 to P5
 		// priv->p5_mode = P5_MODE_GPHY_P4; // Connects P4 to P5
 		// priv->p5_mode = P5_MODE_GMAC; // Connects external PHY to P5, or P5 -> 2nd GMAC.
+
 		if (priv->p5_mode != P5_MODE_DISABLED)
 			mt7530_setup_port5(priv, PHY_INTERFACE_MODE_NA);
-	}
-
-	/* Enable and reset MIB counters */
-	mt7530_mib_reset(ds);
-
-	mt7530_clear(priv, MT7530_MFC, UNU_FFP_MASK);
-
-	for (i = 0; i < MT7530_NUM_PORTS; i++) {
-		/* Disable forwarding by default on all ports */
-		mt7530_rmw(priv, MT7530_PCR_P(i), PCR_MATRIX_MASK,
-			   PCR_MATRIX_CLR);
-
-		if (dsa_is_cpu_port(ds, i))
-			mt7530_cpu_port_enable(priv, i);
-		else
-			mt7530_port_disable(ds, i);
+		mt7530_setup_port5(priv, PHY_INTERFACE_MODE_RGMII_TXID);
 	}
 
 	/* Flush the FDB table */
@@ -1452,13 +1442,20 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 		if (priv->p5_mode != P5_MODE_GMAC) {
 			mt7530_port_disable(ds, port);
 			priv->p5_mode = P5_MODE_GMAC;
-			mt7530_setup_port5(priv, state->interface);
+			if (dsa_is_user_port(ds, 5)) {
+				/* connected to external phy, no delays! */
+				mt7530_setup_port5(priv,
+						   PHY_INTERFACE_MODE_RGMII);
+				mcr |= PMCR_EXT_PHY;
+			} else {
+				/* connected to mac */
+				mt7530_setup_port5(priv, state->interface);
+			}
 			mt7530_port_enable(ds, port, NULL);
 		}
-		mcr |= PMCR_EXT_PHY;
 		break;
 	case 6: /* 1e cpu port */
-		if (!phy_interface_mode_is_rgmii(state->interface) &&
+		if (state->interface != PHY_INTERFACE_MODE_RGMII &&
 		    state->interface != PHY_INTERFACE_MODE_TRGMII)
 			goto unsupported;
 		break;

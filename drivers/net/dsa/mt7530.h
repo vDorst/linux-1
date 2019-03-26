@@ -265,6 +265,7 @@ enum mt7530_vlan_port_attr {
 
 /* Register for hw trap modification */
 #define MT7530_MHWTRAP			0x7804
+#define  MHWTRAP_PHY0_SEL		BIT(20)
 #define  MHWTRAP_MANUAL			BIT(16)
 #define  MHWTRAP_P5_MAC_SEL		BIT(13)
 #define  MHWTRAP_P6_DIS			BIT(8)
@@ -429,8 +430,23 @@ typedef enum {
 	P5_MODE_GPHY_P0,
 	P5_MODE_GPHY_P4,
 	P5_MODE_GMAC,
-	P5_MODE_CPU_PORT,
 } p5_mode_t;
+
+static inline const char *p5_modes(p5_mode_t p5_mode)
+{
+	switch (p5_mode) {
+	case P5_MODE_DISABLED:
+		return "DISABLED";
+	case P5_MODE_GPHY_P0:
+		return "PHY P0";
+	case P5_MODE_GPHY_P4:
+		return "PHY P4";
+	case P5_MODE_GMAC:
+		return "GMAC";
+	default:
+		return "unknown";
+	}
+}
 
 /* struct mt7530_priv -	This is the main data structure for holding the state
  *			of the driver
