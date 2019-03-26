@@ -423,6 +423,15 @@ struct mt7530_port {
 	bool vlan_filtering;
 };
 
+/* Port 5 Mode definitions */
+typedef enum {
+	P5_MODE_DISABLED = 0,
+	P5_MODE_GPHY_P0,
+	P5_MODE_GPHY_P4,
+	P5_MODE_GMAC,
+	P5_MODE_CPU_PORT,
+} p5_mode_t;
+
 /* struct mt7530_priv -	This is the main data structure for holding the state
  *			of the driver
  * @dev:		The device pointer
@@ -438,7 +447,8 @@ struct mt7530_port {
  * @ports:		Holding the state among ports
  * @reg_mutex:		The lock for protecting among process accessing
  *			registers
- * @p5_interface:	PORT 5 interface status NULL = Not set.
+ * @p5_mode:		PORT 5 mode status
+ * @p5_ephy_addr:	External phy in parralel with port 5, isolated needed.
  */
 struct mt7530_priv {
 	struct device		*dev;
@@ -451,7 +461,8 @@ struct mt7530_priv {
 	struct gpio_desc	*reset;
 	unsigned int		id;
 	bool			mcm;
-	phy_interface_t		p5_interface;
+	p5_mode_t		p5_mode;
+	u16 			p5_ephy_addr;
 
 	struct mt7530_port	ports[MT7530_NUM_PORTS];
 	/* protect among processes for registers access*/
