@@ -627,10 +627,48 @@ mt7530_get_sset_count(struct dsa_switch *ds, int port, int sset)
 	return ARRAY_SIZE(mt7530_mib);
 }
 
-static void mt7530_setup_port5(struct mt7530_priv *priv)
+static int mt7530_phy_isolated(struct mt7530_priv *priv)
+{
+	struct mii_bus *bus = priv->bus;
+	int ret;
+
+	ret = bus->read(bus, priv->p5_ephy_addr, MII_BMCR);
+	if (ret < 0) {
+		dev_err(&bus->dev,
+			"failed to read phy 0x%x\n", priv->p5_ephy_addr);
+		return ret;
+	}
+	/* Put the phy in powerdown and isolate the RGMII pins */
+	ret |= BMCR_PDOWN | BMCR_ISOLATE;
+
+	ret = bus->write(bus, priv->p5_ephy_addr, MII_BMCR, ret);
+	if (ret < 0) {
+		dev_err(&bus->dev,
+			"failed to write phy 0x%x\n", priv->p5_ephy_addr);
+		return ret;
+	}
+	ret = bus->read(bus, priv->p5_ephy_addr, MII_BMCR);
+	if (ret < 0) {
+		dev_err(&bus->dev,
+			"failed to read phy 0x%x\n", priv->p5_ephy_addr);
+		return ret;
+	}
+	if ((ret & (BMCR_PDOWN | BMCR_ISOLATE)) != (BMCR_PDOWN | BMCR_ISOLATE)) {
+		dev_err(&bus->dev,
+			"failed to isolated phy 0x%x\n", priv->p5_ephy_addr);
+		return -ENODEV;
+	}
+
+	dev_err(&bus->dev, "Phy 0x%x isolated!\n", priv->p5_ephy_addr);
+
+	return 0;
+}
+
+static void mt7530_setup_port5(struct mt7530_priv *priv, phy_interface_t interface)
 {
 	/* Enable and setup Port 5; */
 	int val;
+
 	mutex_lock(&priv->reg_mutex);
 
 	val = mt7530_read(priv, MT7530_MHWTRAP);
@@ -639,41 +677,68 @@ static void mt7530_setup_port5(struct mt7530_priv *priv)
 
 	val &= ~MHWTRAP_P5_RGMII_MODE & ~MHWTRAP_P5_DIS;
 
-	if (phy_interface_mode_is_rgmii( priv->p5_interface ) ||
-	    priv->p5_interface == PHY_INTERFACE_MODE_INTERNAL ) 
+	switch (priv->p5_mode) {
+	case P5_MODE_GPHY_P0:
+		/* MT7530_P5_MODE_GPHY_P0: 2nd GMAC -> P5 -> P0 */
+		val |= MHWTRAP_PHY0_SEL;
+		/* fall through */
+	case P5_MODE_GPHY_P4:
+		/* MT7530_P5_MODE_GPHY_P4: 2nd GMAC -> P5 -> P4 */
+		val &= ~MHWTRAP_P5_MAC_SEL & ~MHWTRAP_P5_DIS;
 		val |= MHWTRAP_P5_RGMII_MODE;
 
-	if (priv->p5_interface == PHY_INTERFACE_MODE_INTERNAL)
-		val &= ~MHWTRAP_P5_MAC_SEL; 
+		/* Isolate external phy */
+		if (priv->p5_ephy_addr)
+			if (mt7530_phy_isolated(priv) < 0) {
+				pr_warn("%s: Put externel phy in isolation mode failed!\n", __func__);
+				goto unlock_exit;
+			}
 
-	mt7530_write(priv, MT7530_MHWTRAP, val);
-
-	pr_warn("Setup P5 HWTRAP: %x, phy-mode: %s\n", val, phy_modes(priv->p5_interface));
-
-	if (priv->p5_interface == PHY_INTERFACE_MODE_INTERNAL) {
-		/* P5 RGMII TX Clock Control, delay 4 */
-		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x14));
-
-		/* P5 RGMII RX Clock Control: delay setting for 1000M */
-		val = CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2);
-		mt7530_write(priv, MT7530_P5RGMIIRXCR, val);
+		if (priv->id == ID_MT7621) {
+			/* P5 RGMII RX Clock Control [0x7b00]: delay setting for 1000M */
+			mt7530_write(priv, MT7530_P5RGMIIRXCR,
+				     CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2));
+			/* P5 RGMII TX Clock Control [0x7b04]: delay 4 */
+			mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x14));
+		} else { /* priv->id == ID_MT7623 */
+			/* P5 RGMII RX Clock Control [0x7b00]: delay setting for 1000M */
+			mt7530_write(priv, MT7530_P5RGMIIRXCR,
+				     CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(4));
+			/* P5 RGMII TX Clock Control [0x7b04]: delay 0 */
+			mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x10));
+		}
 
 		/* Setup the MAC by default for the cpu port */
-		mt7530_write(priv, MT7530_PMCR_P(5), 0x76300);
+		mt7530_write(priv, MT7530_PMCR_P(5), 0x56300);
 
-	} else {
-		/* P5 RGMII TX Clock Control, delay 0 */
-		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x14));
+		pr_warn("Setup P5 HWTRAP: 0x%x, phy-mode: PHY P%d\n", val,
+					priv->p5_mode==P5_MODE_GPHY_P0 ? 0 : 4);
+		break;
+	case P5_MODE_GMAC:
+		/* MT7530_P5_MODE_GMAC: External PHY -> P5. 2nd GMAC not used */
+		val |= MHWTRAP_P5_RGMII_MODE;
+		val &= ~MHWTRAP_P5_DIS;
 
-		/* P5 RGMII RX Clock Control: delay setting for 1000M */
-		val = CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2);
-		mt7530_write(priv, MT7530_P5RGMIIRXCR, val);
+		/* P5 RGMII RX Clock Control [0x7b00]: delay setting for 1000M */
+		mt7530_write(priv, MT7530_P5RGMIIRXCR,
+			     CSR_RGMII_EDGE_ALIGN | CSR_RGMII_RXC_0DEG_CFG(2));
+
+		/* P5 RGMII TX Clock Control [0x7b04]: delay 4 */
+		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x10));
+
+		pr_warn("Setup P5 HWTRAP: %x, port-mode: GMAC: phy-mode: %s\n", val, phy_modes(interface));
+		break;
+	default:
+		pr_warn("%s: Unsupported p5_mode %d\n", __func__, priv->p5_mode);
+		goto unlock_exit;
+		break;
 	}
 
 	/* reduce P5 RGMII Tx driving, 8mA*/
 	val = P5_IO_CLK_DRV(1) | P5_IO_DATA_DRV(1);
 	mt7530_write(priv, MT7530_IO_DRV_CR, val);
 
+unlock_exit:
 	mutex_unlock(&priv->reg_mutex);
 }
 
@@ -1233,7 +1298,6 @@ mt7530_setup(struct dsa_switch *ds)
 	struct mt7530_dummy_poll p;
 	struct mii_bus *bus = priv->bus;
 	u8 addr;
-	u8 ephy_addr = 0;
 
 	/* The parent node of master netdev which holds the common system
 	 * controller also is the container for two GMACs nodes representing
@@ -1303,32 +1367,36 @@ mt7530_setup(struct dsa_switch *ds)
 	val |= MHWTRAP_MANUAL;
 	mt7530_write(priv, MT7530_MHWTRAP, val);
 
-	priv->p5_interface = PHY_INTERFACE_MODE_NA;
+	priv->p5_mode = P5_MODE_DISABLED;
+	if (!dsa_is_user_port(ds, 5)) {
+		// Port 5 mode detect when not used as user port.
 
-	// Port 5 mode detect
-
-	// Detect external phy address.
-	for (addr = 5; addr < 31; addr++) {
-		if (bus->mdio_map[addr]) {
-			pr_warn("External phy detected @ 0x%x\n", addr);
-			ephy_addr = addr;
-			priv->p5_interface = PHY_INTERFACE_MODE_RGMII_AN;
+		// Detect external phy address.
+		for (addr = 0; addr < 31; addr++) {
+			if (bus->mdio_map[addr]) {
+				pr_warn("External phy detected @ 0x%x, %s, %s\n",
+					addr,
+					bus->mdio_map[addr]->dev.of_node->full_name,
+					bus->mdio_map[addr]->dev.of_node->parent->full_name);
+				priv->p5_ephy_addr = addr;
+				priv->p5_mode = P5_MODE_GMAC;
+			}
 		}
+
+		// Set P0/P4 to P5 if defined as phy.
+		if (bus->mdio_map[0x00])
+			priv->p5_mode = P5_MODE_GPHY_P0;
+		if (bus->mdio_map[0x04])
+			priv->p5_mode = P5_MODE_GPHY_P4;
+
+		/* HACK: Enable P0 via P5 to 2nd GMAC */
+		// priv->p5_mode = P5_MODE_DISABLED; // P5 disabled and External PHY to 2nd GMAC
+		// priv->p5_mode = P5_MODE_GPHY_P0; // Connects P0 to P5
+		// priv->p5_mode = P5_MODE_GPHY_P4; // Connects P4 to P5
+		// priv->p5_mode = P5_MODE_GMAC; // Connects external PHY to P5, or P5 -> 2nd GMAC.
+		if (priv->p5_mode != P5_MODE_DISABLED)
+			mt7530_setup_port5(priv, PHY_INTERFACE_MODE_NA);
 	}
-
-	// Set P0/P4 to P5 if defined as phy.
-	if (bus->mdio_map[0x00])
-		priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P0_AN;
-	if (bus->mdio_map[0x04])
-		priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P4_AN;
-
-	/* HACK: Enable P0 via P5 to 2nd GMAC */
-	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII_AN; // P5 disabled and External PHY to 2nd GMAC
-	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P0_AN; // Connects P0 to P5
-	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII_INTERNAL_P4_AN; // Connects P4 to P5
-	// priv->p5_interface = PHY_INTERFACE_MODE_RGMII; // Connects external PHY to P5, 2nd GMAC not used
-	if (priv->p5_interface != PHY_INTERFACE_MODE_NA)
-		mt7530_setup_port5(priv);
 
 	/* Enable and reset MIB counters */
 	mt7530_mib_reset(ds);
@@ -1373,14 +1441,12 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 			goto unsupported;
 		break;
 	case 5: /* 2nd cpu port with phy of port 0 or 4 / external phy */
-		if (!phy_interface_mode_is_rgmii(state->interface) &&
-		    state->interface != PHY_INTERFACE_MODE_MII &&
-		    state->interface != PHY_INTERFACE_MODE_INTERNAL)
+		if (!phy_interface_mode_is_rgmii(state->interface))
 			goto unsupported;
-		if (priv->p5_interface != state->interface) {
+		if (priv->p5_mode != P5_MODE_GMAC) {
 			mt7530_port_disable(ds, port);
-			priv->p5_interface = state->interface;
-			mt7530_setup_port5(priv);
+			priv->p5_mode = P5_MODE_GMAC;
+			mt7530_setup_port5(priv, state->interface);
 			mt7530_port_enable(ds, port, NULL);
 		}
 		mcr |= PMCR_EXT_PHY;
