@@ -1291,7 +1291,9 @@ mt7530_setup(struct dsa_switch *ds)
 	struct device_node *dn;
 	struct mt7530_dummy_poll p;
 	struct mii_bus *bus = priv->bus;
+	struct phy_device *phydev;
 	u8 addr;
+	phy_interface_t interface;
 
 	/* The parent node of master netdev which holds the common system
 	 * controller also is the container for two GMACs nodes representing
@@ -1383,20 +1385,28 @@ mt7530_setup(struct dsa_switch *ds)
 
 		// Detect external phy address.
 		for (addr = 0; addr < 31; addr++) {
-			if (bus->mdio_map[addr]) {
-				pr_warn("External phy detected @ 0x%x, %s, %s\n",
+			if (mdiobus_is_registered_device(bus, addr)) {
+				phydev = mdiobus_get_phy(bus, addr);
+				interface = PHY_INTERFACE_MODE_TRGMII;
+				if (phydev)
+					interface = phydev->interface;
+				pr_warn("External phy detected @ 0x%x, %s, %s, %s, %s\n",
 					addr,
 					bus->mdio_map[addr]->dev.of_node->full_name,
-					bus->mdio_map[addr]->dev.of_node->parent->full_name);
+					bus->mdio_map[addr]->dev.of_node->parent->full_name,
+					bus->mdio_map[addr]->dev.of_node->parent->parent->full_name,
+					phy_modes(interface));
+				if (phydev->attached_dev)
+					pr_warn("External phy detected %s\n", phydev->attached_dev->name);
 				priv->p5_ephy_addr = addr;
 				priv->p5_mode = P5_MODE_GMAC;
 			}
 		}
 
 		// Set P0/P4 to P5 if defined as phy.
-		if (bus->mdio_map[0x00])
+		if (mdiobus_is_registered_device(bus, 0x00))
 			priv->p5_mode = P5_MODE_GPHY_P0;
-		if (bus->mdio_map[0x04])
+		if (mdiobus_is_registered_device(bus, 0x04))
 			priv->p5_mode = P5_MODE_GPHY_P4;
 
 		/* HACK: Enable P0 via P5 to 2nd GMAC */

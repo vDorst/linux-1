@@ -130,7 +130,7 @@
 		compatible = "mediatek,eth-mac";
 		mtd-mac-address = <&factory 0x22>;
 		reg = <1>;
-		phy-mode = "rgmii";
+		phy-mode = "rgmii-txid";
 		phy-handle = <&phy4>;
 	};
 */
