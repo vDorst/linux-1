@@ -1288,6 +1288,9 @@ mt7530_setup(struct dsa_switch *ds)
 	struct phy_device *phydev;
 	u8 addr;
 	phy_interface_t interface;
+	struct device_node *mac_np;
+	struct device_node *phy_node;
+	const __be32 *_id;
 
 	/* The parent node of master netdev which holds the common system
 	 * controller also is the container for two GMACs nodes representing
@@ -1374,45 +1377,45 @@ mt7530_setup(struct dsa_switch *ds)
 	}
 
 	priv->p5_mode = P5_MODE_DISABLED;
-	if (!dsa_is_user_port(ds, 5)) {
-		// Port 5 mode detect when not used as user port.
+	interface = PHY_INTERFACE_MODE_NA;
 
-		// Detect external phy address.
-		for (addr = 0; addr < 31; addr++) {
-			if (mdiobus_is_registered_device(bus, addr)) {
-				phydev = mdiobus_get_phy(bus, addr);
-				interface = PHY_INTERFACE_MODE_TRGMII;
-				if (phydev)
-					interface = phydev->interface;
-				pr_warn("External phy detected @ 0x%x, %s, %s, %s, %s\n",
-					addr,
-					bus->mdio_map[addr]->dev.of_node->full_name,
-					bus->mdio_map[addr]->dev.of_node->parent->full_name,
-					bus->mdio_map[addr]->dev.of_node->parent->parent->full_name,
-					phy_modes(interface));
-				if (phydev->attached_dev)
-					pr_warn("External phy detected %s\n", phydev->attached_dev->name);
-				priv->p5_ephy_addr = addr;
-				priv->p5_mode = P5_MODE_GMAC;
+	if (!dsa_is_unused_port(ds, 5)) {
+		priv->p5_mode = P5_MODE_GMAC;
+		interface = of_get_phy_mode(ds->ports[5].dn);
+	} else {
+		/* Scan the ethernet node. Look for GMAC1.
+		 * lookup used phy*/
+		for_each_child_of_node(dn, mac_np) {
+			if (!of_device_is_compatible(mac_np, "mediatek,eth-mac"))
+				continue;
+			_id = of_get_property(mac_np, "reg", NULL);
+			if (be32_to_cpup(_id)  != 1)
+				continue;
+
+			interface = of_get_phy_mode(mac_np);
+			phy_node = of_parse_phandle(mac_np, "phy-handle", 0);
+
+			if (phy_node->parent == priv->dev->of_node->parent) {
+				_id = of_get_property(phy_node, "reg", NULL);
+				id = be32_to_cpup(_id);
+				if (id == 0)
+					priv->p5_mode = P5_MODE_GPHY_P0;
+				if (id == 4)
+					priv->p5_mode = P5_MODE_GPHY_P4;
 			}
+			break;
 		}
 
-		// Set P0/P4 to P5 if defined as phy.
-		if (mdiobus_is_registered_device(bus, 0x00))
-			priv->p5_mode = P5_MODE_GPHY_P0;
-		if (mdiobus_is_registered_device(bus, 0x04))
-			priv->p5_mode = P5_MODE_GPHY_P4;
-
-		/* HACK: Enable P0 via P5 to 2nd GMAC */
-		// priv->p5_mode = P5_MODE_DISABLED; // P5 disabled and External PHY to 2nd GMAC
-		// priv->p5_mode = P5_MODE_GPHY_P0; // Connects P0 to P5
-		// priv->p5_mode = P5_MODE_GPHY_P4; // Connects P4 to P5
-		// priv->p5_mode = P5_MODE_GMAC; // Connects external PHY to P5, or P5 -> 2nd GMAC.
-
-		if (priv->p5_mode != P5_MODE_DISABLED)
-			mt7530_setup_port5(priv, PHY_INTERFACE_MODE_NA);
-		mt7530_setup_port5(priv, PHY_INTERFACE_MODE_RGMII_TXID);
+		// Detect external phy address.
+		for (addr = 5; addr < 31; addr++) {
+			if (mdiobus_is_registered_device(bus, addr)) {
+				phydev = mdiobus_get_phy(bus, addr);
+				priv->p5_ephy_addr = addr;
+				break;
+			}
+		}
 	}
+	mt7530_setup_port5(priv, interface);
 
 	/* Flush the FDB table */
 	ret = mt7530_fdb_cmd(priv, MT7530_FDB_FLUSH, NULL);
