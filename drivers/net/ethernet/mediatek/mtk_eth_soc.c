@@ -304,10 +304,13 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 			mcr |= MAC_MCR_FORCE_RX_FC;
 	}
 
-	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
-
-	pr_warn("mtk_mac_config: GMAC%d: M%d: (%s) mcr:%x pause=%x\n", mac->id, mode, phy_modes(state->interface), mcr, state->pause);
-
+	/* Only update when needed! */
+	if (mtk_r32(mac->hw, MTK_MAC_MCR(mac->id)) != mcr) {
+		mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
+		pr_warn("%s: GMAC%d: M%d: (%s) mcr:%x pause=%x\n", __func__,
+			mac->id, mode, phy_modes(state->interface), mcr,
+			state->pause);
+	}
 	return;
 
 err_phy:
