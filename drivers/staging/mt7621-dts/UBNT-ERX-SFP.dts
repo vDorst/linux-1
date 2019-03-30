@@ -108,7 +108,7 @@
 			label = "lan5";
 			phy-handle = <&ephy5>;
 			phy-mode = "rgmii-rxid";
+			status = "disabled";
 		};
 	};
 };
-
