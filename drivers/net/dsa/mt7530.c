@@ -627,41 +627,19 @@ mt7530_get_sset_count(struct dsa_switch *ds, int port, int sset)
 	return ARRAY_SIZE(mt7530_mib);
 }
 
-static int mt7530_phy_isolated(struct mt7530_priv *priv)
+static int mt7530_phy_isolated(struct device_node *ephy_node)
 {
-	struct mii_bus *bus = priv->bus;
+	struct phy_device *phydev = of_phy_find_device(ephy_node);
 	int ret;
 
-	ret = bus->read(bus, priv->p5_ephy_addr, MII_BMCR);
-	if (ret < 0) {
-		dev_err(&bus->dev,
-			"failed to read phy 0x%x\n", priv->p5_ephy_addr);
-		return ret;
-	}
-	/* Put the phy in powerdown and isolate the RGMII pins */
-	ret |= BMCR_PDOWN | BMCR_ISOLATE;
+	if (!phydev)
+		return 0;
 
-	ret = bus->write(bus, priv->p5_ephy_addr, MII_BMCR, ret);
-	if (ret < 0) {
-		dev_err(&bus->dev,
-			"failed to write phy 0x%x\n", priv->p5_ephy_addr);
-		return ret;
-	}
-	ret = bus->read(bus, priv->p5_ephy_addr, MII_BMCR);
-	if (ret < 0) {
-		dev_err(&bus->dev,
-			"failed to read phy 0x%x\n", priv->p5_ephy_addr);
-		return ret;
-	}
-	if ((ret & (BMCR_PDOWN | BMCR_ISOLATE)) != (BMCR_PDOWN | BMCR_ISOLATE)) {
-		dev_err(&bus->dev,
-			"failed to isolated phy 0x%x\n", priv->p5_ephy_addr);
-		return -ENODEV;
-	}
-
-	dev_err(&bus->dev, "Phy 0x%x isolated!\n", priv->p5_ephy_addr);
-
-	return 0;
+	ret = phy_modify(phydev, MII_BMCR, 0, (BMCR_ISOLATE | BMCR_PDOWN));
+	if (!ret)
+		pr_info("Put phy %s in isolation mode!\n",
+							ephy_node->full_name);
+	return ret;
 }
 
 static void mt7530_setup_port5(struct mt7530_priv *priv, phy_interface_t interface)
@@ -687,12 +665,11 @@ static void mt7530_setup_port5(struct mt7530_priv *priv, phy_interface_t interfa
 		val &= ~MHWTRAP_P5_MAC_SEL & ~MHWTRAP_P5_DIS;
 
 		/* Isolate external phy */
-		if (priv->p5_ephy_addr)
-			if (mt7530_phy_isolated(priv) < 0) {
+		if (priv->ephy_node)
+			if (mt7530_phy_isolated(priv->ephy_node) < 0) {
 				pr_warn("%s: Put externel phy in isolation mode failed!\n", __func__);
 				goto unlock_exit;
 			}
-
 		/* Setup the MAC by default for the cpu port */
 		mt7530_write(priv, MT7530_PMCR_P(5), 0x56300);
 		break;
@@ -716,15 +693,19 @@ static void mt7530_setup_port5(struct mt7530_priv *priv, phy_interface_t interfa
 		/* P5 RGMII RX Clock Control [0x7b00]: delay setting for 1000M */
 		mt7530_write(priv, MT7530_P5RGMIIRXCR, CSR_RGMII_EDGE_ALIGN);
 
-		if (interface == PHY_INTERFACE_MODE_RGMII_TXID ||
-		    interface == PHY_INTERFACE_MODE_RGMII_ID)
+		/* Don't set delay in DSA mode */
+		if (!dsa_is_dsa_port(priv->ds, 5) &&
+		   (interface == PHY_INTERFACE_MODE_RGMII_TXID ||
+		    interface == PHY_INTERFACE_MODE_RGMII_ID))
 			tx_delay = 4; /* 2 ns */
 
 		/* P5 RGMII TX Clock Control [0x7b04]: delay x */
-		mt7530_write(priv, MT7530_P5RGMIITXCR, CSR_RGMII_TXC_CFG(0x10 + tx_delay));
+		mt7530_write(priv, MT7530_P5RGMIITXCR,
+			     CSR_RGMII_TXC_CFG(0x10 + tx_delay));
 
 		/* reduce P5 RGMII Tx driving, 8mA, 0x7810 = 0x11 */
-		mt7530_write(priv, MT7530_IO_DRV_CR, P5_IO_CLK_DRV(1) | P5_IO_DATA_DRV(1));
+		mt7530_write(priv, MT7530_IO_DRV_CR,
+			     P5_IO_CLK_DRV(1) | P5_IO_DATA_DRV(1));
 	}
 
 	mt7530_write(priv, MT7530_MHWTRAP, val);
@@ -1290,9 +1271,6 @@ mt7530_setup(struct dsa_switch *ds)
 	u32 id, val;
 	struct device_node *dn;
 	struct mt7530_dummy_poll p;
-	struct mii_bus *bus = priv->bus;
-	struct phy_device *phydev;
-	u8 addr;
 	phy_interface_t interface;
 	struct device_node *mac_np;
 	struct device_node *phy_node;
@@ -1382,6 +1360,10 @@ mt7530_setup(struct dsa_switch *ds)
 			mt7530_port_disable(ds, i);
 	}
 
+	/* Get external phy phandle */
+	priv->ephy_node = of_parse_phandle(priv->dev->of_node,
+					   "mediatek,ephy-handle", 0);
+
 	priv->p5_mode = P5_MODE_DISABLED;
 	interface = PHY_INTERFACE_MODE_NA;
 
@@ -1411,16 +1393,8 @@ mt7530_setup(struct dsa_switch *ds)
 			}
 			break;
 		}
-
-		// Detect external phy address.
-		for (addr = 5; addr < 31; addr++) {
-			if (mdiobus_is_registered_device(bus, addr)) {
-				phydev = mdiobus_get_phy(bus, addr);
-				priv->p5_ephy_addr = addr;
-				break;
-			}
-		}
 	}
+
 	mt7530_setup_port5(priv, interface);
 
 	/* Flush the FDB table */
@@ -1453,19 +1427,14 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 		if (!phy_interface_mode_is_rgmii(state->interface))
 			goto unsupported;
 		if (priv->p5_mode != P5_MODE_GMAC) {
-			mt7530_port_disable(ds, port);
 			priv->p5_mode = P5_MODE_GMAC;
-			if (dsa_is_user_port(ds, 5)) {
-				/* connected to external phy, no delays! */
-				mt7530_setup_port5(priv,
-						   PHY_INTERFACE_MODE_RGMII);
-				mcr |= PMCR_EXT_PHY;
-			} else {
-				/* connected to mac */
-				mt7530_setup_port5(priv, state->interface);
-			}
+			mt7530_port_disable(ds, port);
+			mt7530_setup_port5(priv, state->interface);
 			mt7530_port_enable(ds, port, NULL);
 		}
+		/* We are connected to external phy */
+		if (dsa_is_user_port(ds, 5))
+			mcr |= PMCR_EXT_PHY;
 		break;
 	case 6: /* 1e cpu port */
 		if (state->interface != PHY_INTERFACE_MODE_RGMII &&
