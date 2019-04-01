@@ -2434,6 +2434,7 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 {
 	struct phylink *phylink;
 	struct mtk_mac *mac;
+	const char *name = of_get_property(np, "label", NULL);
 	const __be32 *_id = of_get_property(np, "reg", NULL);
 	int phy_mode, id, err;
 
@@ -2516,6 +2517,9 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 
 	eth->netdev[id]->irq = eth->irq[0];
 	eth->netdev[id]->dev.of_node = np;
+
+	if (name)
+		strlcpy(eth->netdev[id]->name, name, IFNAMSIZ);
 
 	return 0;
 

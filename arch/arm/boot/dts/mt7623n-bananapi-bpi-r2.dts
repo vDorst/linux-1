@@ -134,6 +134,7 @@
 	gmac0: mac@0 {
 		compatible = "mediatek,eth-mac";
 		reg = <0>;
+		label = "switch0";
 		phy-mode = "trgmii";
 
 		fixed-link {
@@ -146,6 +147,7 @@
 	gmac1: mac@1 {
 		compatible = "mediatek,eth-mac";
 		reg = <1>;
+		label = "wan";
 		phy-mode = "rgmii";
 		phy-handle = <&phy0>;
 	};
@@ -170,7 +172,7 @@
 				#address-cells = <1>;
 				#size-cells = <0>;
 
-/* Disabled, is now handled by gmac1 (eth1) via phy-handle!
+/* Disabled, is now handled by gmac1 (eth1/wan) via phy-handle!
 				port@0 {
 					reg = <0>;
 					label = "wan";
