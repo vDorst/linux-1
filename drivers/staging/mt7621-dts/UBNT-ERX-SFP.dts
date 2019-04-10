@@ -105,10 +105,10 @@
 	ports {
 		lan5: port@5 {
 			reg = <5>;
-			label = "eth5";
+			label = "lan5";
 			phy-handle = <&ephy5>;
 			phy-mode = "rgmii-rxid";
-			status = "disabled";
+			// status = "disabled";
 		};
 	};
 };
