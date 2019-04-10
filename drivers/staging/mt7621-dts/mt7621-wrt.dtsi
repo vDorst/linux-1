@@ -1,4 +1,5 @@
 #include <dt-bindings/interrupt-controller/mips-gic.h>
+#include <dt-bindings/clock/mt7621-clk.h>
 
 / {
 	#address-cells = <1>;
@@ -40,29 +41,6 @@
 		clock-output-names = "cpu", "bus";
 	};
 
-	clkxtal: clkxtal {
-		compatible = "fixed-clock";
-		#clock-cells = <0>;
-		clock-frequency = <40000000>;
-		clock-output-names = "clkxtal";
-	};
-
-	cpuclock: cpuclock {
-		#clock-cells = <0>;
-		compatible = "fixed-clock";
-
-		/* FIXME: there should be way to detect this */
-		clock-frequency = <880000000>;
-	};
-
-	sysclock: sysclock@0 {
-		#clock-cells = <0>;
-		compatible = "fixed-clock";
-
-		/* FIXME: there should be way to detect this */
-		clock-frequency = <50000000>;
-	};
-
 	palmbus: palmbus@1E000000 {
 		compatible = "palmbus";
 		reg = <0x1E000000 0x100000>;
@@ -96,7 +74,7 @@
 			compatible = "mediatek,mt7621-i2c";
 			reg = <0x900 0x100>;
 
-			clocks = <&sysclock>;
+			clocks = <&pll MT7621_CLK_BUS>;
 
 			resets = <&rstctrl 16>;
 			reset-names = "i2c";
@@ -114,7 +92,7 @@
 			compatible = "mediatek,mt7621-i2s";
 			reg = <0xa00 0x100>;
 
-			clocks = <&sysclock>;
+			clocks = <&pll MT7621_CLK_BUS>;
 
 			resets = <&rstctrl 17>;
 			reset-names = "i2s";
@@ -162,7 +140,7 @@
 			compatible = "ns16550a";
 			reg = <0xc00 0x100>;
 
-			clocks = <&sysclock>;
+			clocks = <&pll MT7621_CLK_BUS>;
 			clock-frequency = <50000000>;
 
 			interrupt-parent = <&gic>;
@@ -179,7 +157,7 @@
 			compatible = "ralink,mt7621-spi";
 			reg = <0xb00 0x100>;
 
-			clocks = <&sysclock>;
+			clocks = <&pll MT7621_CLK_BUS>;
 
 			resets = <&rstctrl 18>;
 			reset-names = "spi";
@@ -350,7 +328,7 @@
 		       0x1e1d0700 0x0100>;
 		reg-names = "mac", "ippc";
 
-		clocks = <&sysclock>;
+		clocks = <&pll MT7621_CLK_BUS>;
 		clock-names = "sys_ck";
 
 		interrupt-parent = <&gic>;
@@ -388,7 +366,7 @@
 		timer {
 			compatible = "mti,gic-timer";
 			interrupts = <GIC_LOCAL 1 IRQ_TYPE_NONE>;
-			clocks = <&cpuclock>;
+			clocks = <&pll MT7621_CLK_CPU>;
 		};
 	};
 
@@ -417,14 +395,9 @@
 		reg = <0x1e100000 0xe000>;
 		interrupt-parent = <&gic>;
 		interrupts = <GIC_SHARED 3 IRQ_TYPE_LEVEL_HIGH>;
-/*
-#		clocks = <&ethsys CLK_ETHSYS_ETH>,
-#			 <&ethsys CLK_ETHSYS_ESW>;
-#		clock-names = "ethif", "esw";
-*/
 		resets = <&rstctrl 6>,
 			 <&rstctrl 23>,
-			 <&rstctrl 0>;
+			 <&rstctrl 31>;
 		reset-names = "fe", "gmac", "ppe";
 		mediatek,ethsys = <&ethsys>;
 		mediatek,pctl = <&ethsys>;
