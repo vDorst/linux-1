@@ -387,6 +387,7 @@
 #define SYSCFG0_SGMII_MASK	(3 << 8)
 #define SYSCFG0_SGMII_GMAC1	((2 << 8) & GENMASK(9, 8))
 #define SYSCFG0_SGMII_GMAC2	((3 << 8) & GENMASK(9, 8))
+#define SYSCFG0_SGMII_GMAC2_V2  ((1 << 8) & GENMASK(9, 8))
 
 #define	NUM_TRGMII_CTRL			5
 
@@ -414,6 +415,12 @@
 /* Register to control remote fault */
 #define SGMSYS_SGMII_MODE	0x20
 #define SGMII_REMOTE_FAULT_DIS	BIT(8)
+
+/* Register to set SGMII speed, ANA RG_ Control Signals III*/
+#define SGMSYS_ANA_RG_CS3	0x2028
+#define RG_PHY_SPEED_MASK	(BIT(2) | BIT(3))
+#define RG_PHY_SPEED_1_25G	0x0
+#define RG_PHY_SPEED_3_125G	BIT(2)
 
 /* Register to power up QPHY */
 #define SGMSYS_QPHY_PWR_STATE_CTRL 0xe8
@@ -691,6 +698,7 @@ struct mtk_eth {
 struct mtk_mac {
 	int				id;
 	phy_interface_t			interface;
+	unsigned int			mode;
 	struct device_node		*of_node;
 	struct phylink 			*phylink;
 	struct mtk_eth			*hw;
