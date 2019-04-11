@@ -1475,6 +1475,9 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 			mcr |= PMCR_RX_FC_EN;
 	}
 
+	if (port == 6)
+		mcr = 0x5e33b;
+
 	mt7530_write(priv, MT7530_PMCR_P(port), mcr);
 
 	dev_info(ds->dev, "%s: P%d, mode: %x, %s, mcr=%x pause=%x\n", __func__,
