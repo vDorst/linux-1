@@ -407,6 +407,15 @@ config MTD_NAND_MTK
 	  Enables support for NAND controller on MTK SoCs.
 	  This controller is found on mt27xx, mt81xx, mt65xx SoCs.
 
+config MTD_NAND_MT7621
+	tristate "Support for Mediatek MT7621 SoC NAND controller"
+	depends on SOC_MT7621
+	select MTD_NAND_IDS
+	select MTD_NAND_ECC
+	help
+	  Enable support for the NAND controller on the Mediatek MT7621
+	  SoC platforms.
+
 config MTD_NAND_TEGRA
 	tristate "NVIDIA Tegra NAND controller"
 	depends on ARCH_TEGRA || COMPILE_TEST
