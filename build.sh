@@ -38,7 +38,9 @@ if [ ${PACKAGE_Error} == 1 ]; then exit 1; fi
 kernver=$(make kernelversion)
 #kernbranch=$(git rev-parse --abbrev-ref HEAD)
 kernbranch=$(git branch --contains $(git log -n 1 --pretty='%h') | grep -v '(HEAD' | head -1 | sed 's/^..//')
-gitbranch=$(echo $kernbranch|sed 's/^4\.[0-9]\+-//')
+gitbranch=$(echo $kernbranch|sed 's/^[45]\.[0-9]\+//'|sed 's/-rc$//')
+
+echo "kernbranch:$kernbranch,gitbranch:$gitbranch"
 
 function increase_kernel {
         #echo $kernver
@@ -73,7 +75,7 @@ function pack {
 	echo "pack..."
 	olddir=$(pwd)
 	cd ../SD
-	fname=bpi-r64_${kernver}_${gitbranch}.tar.gz
+	fname=bpi-r64_${kernver}${gitbranch}.tar.gz
 	tar -cz --owner=root --group=root -f $fname BPI-BOOT BPI-ROOT
 	md5sum $fname > $fname.md5
 	ls -lh $(pwd)"/"$fname
@@ -81,7 +83,7 @@ function pack {
 }
 
 function upload {
-	imagename="uImage_${kernver}-${gitbranch}"
+	imagename="uImage_${kernver}${gitbranch}"
 	read -e -i $imagename -p "uImage-filename: " input
 	imagename="${input:-$imagename}"
 
@@ -92,13 +94,13 @@ function upload {
 
 function install {
 
-	imagename="uImage_${kernver}-${gitbranch}"
+	imagename="uImage_${kernver}${gitbranch}"
 	read -e -i $imagename -p "Kernel-filename: " input
 	imagename="${input:-$imagename}"
 
 	echo "Name: $imagename"
 
-	dtbname="${kernver}-${gitbranch}.dtb"
+	dtbname="${kernver}${gitbranch}.dtb"
 	read -e -i $dtbname -p "DeviceTree-filename: " input
 	dtbname="${input:-$dtbname}"
 
@@ -166,17 +168,17 @@ function install {
 			echo "syncing sd-card...this will take a while"
 			sync
 
-			kernelname=$(ls -1t $INSTALL_MOD_PATH"/lib/modules" | head -n 1)
-			EXTRA_MODULE_PATH=$INSTALL_MOD_PATH"/lib/modules/"$kernelname"/kernel/extras"
-			#echo $kernelname" - "${EXTRA_MODULE_PATH}
-			CRYPTODEV="cryptodev/cryptodev-linux/cryptodev.ko"
-			if [ -e "${CRYPTODEV}" ]; then
-				echo Copy CryptoDev
-				sudo mkdir -p "${EXTRA_MODULE_PATH}"
-				sudo cp "${CRYPTODEV}" "${EXTRA_MODULE_PATH}"
-	        	#Build Module Dependencies
-				sudo /sbin/depmod -b $INSTALL_MOD_PATH ${kernelname}
-			fi
+#			kernelname=$(ls -1t $INSTALL_MOD_PATH"/lib/modules" | head -n 1)
+#			EXTRA_MODULE_PATH=$INSTALL_MOD_PATH"/lib/modules/"$kernelname"/kernel/extras"
+#			#echo $kernelname" - "${EXTRA_MODULE_PATH}
+#			CRYPTODEV="cryptodev/cryptodev-linux/cryptodev.ko"
+#			if [ -e "${CRYPTODEV}" ]; then
+#				echo Copy CryptoDev
+#				sudo mkdir -p "${EXTRA_MODULE_PATH}"
+#				sudo cp "${CRYPTODEV}" "${EXTRA_MODULE_PATH}"
+#	        	#Build Module Dependencies
+#				sudo /sbin/depmod -b $INSTALL_MOD_PATH ${kernelname}
+#			fi
 
 			#sudo cp -r ../mod/lib/modules /media/$USER/BPI-ROOT/lib/
 			if [[ -n "$(grep 'CONFIG_MT76=' .config)" ]];then
@@ -190,8 +192,8 @@ function install {
 
 function deb {
 #set -x
-  ver=${kernver}-${gitbranch}
-  uimagename=uImage_${kernver}-${gitbranch}
+  ver=${kernver}${gitbranch}
+  uimagename=uImage_${kernver}${gitbranch}
   echo "deb package ${ver}"
   prepare_SD
 
@@ -305,7 +307,7 @@ function build {
 		rm ./Image 2>/dev/null
 
 		exec 3> >(tee build.log)
-		export LOCALVERSION="-${gitbranch}"
+		export LOCALVERSION="${gitbranch}"
 		make ${CFLAGS} 2>&3 #&& make modules_install 2>&3
 		ret=$?
 		exec 3>&-
@@ -314,7 +316,7 @@ function build {
 			#how to create zImage?? make zImage does not work here
 			#cat arch/arm64/boot/Image arch/arm64/boot/dts/mediatek/mt7622-bananapi-bpi-r64.dtb > arch/arm64/boot/Image-dtb
 			#cp arch/arm64/boot/Image Image
-			mkimage -A arm -O linux -T kernel -C none -a 40080000 -e 40080000 -n "Linux Kernel $kernver-$gitbranch" -d arch/arm64/boot/Image ./uImage
+			mkimage -A arm -O linux -T kernel -C none -a 40080000 -e 40080000 -n "Linux Kernel $kernver$gitbranch" -d arch/arm64/boot/Image ./uImage
 			cp arch/arm64/boot/dts/mediatek/mt7622-bananapi-bpi-r64.dtb bpi-r64.dtb
 			cp arch/arm64/boot/dts/mediatek/mt7622-bananapi-bpi-r64-gpio.dtb bpi-r64-gpio.dtb
 			#mkimage -A arm64 -O linux -T kernel -C none -a 80008000 -e 80008000 -n "Linux Kernel $kernver-$gitbranch" -d arch/arm64/boot/Image-dtb ./uImage
