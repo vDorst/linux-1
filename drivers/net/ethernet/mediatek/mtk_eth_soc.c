@@ -165,37 +165,36 @@ static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth, int speed)
 	mtk_w32(eth, val, TRGMII_TCK_CTRL);
 }
 
-static int mtk_gmac_sgmii_hw_setup(struct mtk_eth *eth, int mac_id)
+static void mtk_gmac_sgmii_hw_setup(struct mtk_eth *eth, int mac_id)
 {
-	int sid, err;
 	u32 val;
 
-	/* Enable GMAC with SGMII once we finish the SGMII setup. */
-	regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
-	val &= ~SYSCFG0_SGMII_MASK;
-	regmap_write(eth->ethsys, ETHSYS_SYSCFG0, val);
+	/* Setup the link timer and QPHY power up inside SGMIISYS */
+	regmap_write(eth->sgmiisys, SGMSYS_PCS_LINK_TIMER,
+		     SGMII_LINK_TIMER_DEFAULT);
 
-	if (MTK_HAS_CAPS(eth->soc->caps, MTK_GMAC_SHARED_SGMII))
-		sid = 0;
-	else
-		sid = mac_id;
+	regmap_read(eth->sgmiisys, SGMSYS_SGMII_MODE, &val);
+	val |= SGMII_REMOTE_FAULT_DIS;
+	regmap_write(eth->sgmiisys, SGMSYS_SGMII_MODE, val);
 
-	if (MTK_HAS_FLAGS(eth->sgmii->flags[sid], MTK_SGMII_PHYSPEED_AN))
-		err = mtk_sgmii_setup_mode_an(eth->sgmii, sid);
-	else
-		err = mtk_sgmii_setup_mode_force(eth->sgmii, sid);
+	regmap_read(eth->sgmiisys, SGMSYS_PCS_CONTROL_1, &val);
+	val |= SGMII_AN_RESTART;
+	regmap_write(eth->sgmiisys, SGMSYS_PCS_CONTROL_1, val);
 
-	if (err)
-		return err;
+	regmap_read(eth->sgmiisys, SGMSYS_QPHY_PWR_STATE_CTRL, &val);
+	val &= ~SGMII_PHYA_PWD;
+	regmap_write(eth->sgmiisys, SGMSYS_QPHY_PWR_STATE_CTRL, val);
 
 	/* Determine MUX for which GMAC uses the SGMII interface */
-	regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
-	if (!mac_id)
-		val |= SYSCFG0_SGMII_GMAC1;
-	else
-		val |= MTK_HAS_CAPS(eth->soc->caps, MTK_GMAC_SHARED_SGMII) ?
-		       SYSCFG0_SGMII_GMAC2 : SYSCFG0_SGMII_GMAC2_V2;
-	regmap_write(eth->ethsys, ETHSYS_SYSCFG0, val);
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_DUAL_GMAC_SHARED_SGMII)) {
+		regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
+		val &= ~SYSCFG0_SGMII_MASK;
+		val |= !mac_id ? SYSCFG0_SGMII_GMAC1 : SYSCFG0_SGMII_GMAC2;
+		regmap_write(eth->ethsys, ETHSYS_SYSCFG0, val);
+
+		dev_info(eth->dev, "setup shared sgmii for gmac=%d\n",
+			 mac_id);
+	}
 
 	/* Setup the GMAC1 going through SGMII path when SoC also support
 	 * ESW on GMAC1
@@ -205,8 +204,6 @@ static int mtk_gmac_sgmii_hw_setup(struct mtk_eth *eth, int mac_id)
 		mtk_w32(eth, 0, MTK_MAC_MISC);
 		dev_info(eth->dev, "setup gmac1 going through sgmii");
 	}
-
-	return 0;
 }
 
 static void mtk_phy_link_adjust(struct net_device *dev)
@@ -298,7 +295,6 @@ static int mtk_phy_connect(struct net_device *dev)
 	struct mtk_eth *eth;
 	struct device_node *np;
 	u32 val;
-	int err;
 
 	eth = mac->hw;
 	np = of_parse_phandle(mac->of_node, "phy-handle", 0);
@@ -318,11 +314,8 @@ static int mtk_phy_connect(struct net_device *dev)
 	case PHY_INTERFACE_MODE_RGMII:
 		break;
 	case PHY_INTERFACE_MODE_SGMII:
-		if (MTK_HAS_CAPS(eth->soc->caps, MTK_SGMII)) {
-			err = mtk_gmac_sgmii_hw_setup(eth, mac->id);
-			if (err)
-				goto err_phy;
-		}
+		if (MTK_HAS_CAPS(eth->soc->caps, MTK_SGMII))
+			mtk_gmac_sgmii_hw_setup(eth, mac->id);
 		break;
 	case PHY_INTERFACE_MODE_MII:
 		mac->ge_mode = 1;
@@ -2490,15 +2483,13 @@ static int mtk_probe(struct platform_device *pdev)
 	}
 
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SGMII)) {
-		eth->sgmii = devm_kzalloc(eth->dev, sizeof(*eth->sgmii),
-					  GFP_KERNEL);
-		if (!eth->sgmii)
-			return -ENOMEM;
-
-		err = mtk_sgmii_init(eth->sgmii, pdev->dev.of_node,
-				     eth->soc->ana_rgc3);
-		if (err)
-			return err;
+		eth->sgmiisys =
+		syscon_regmap_lookup_by_phandle(pdev->dev.of_node,
+						"mediatek,sgmiisys");
+		if (IS_ERR(eth->sgmiisys)) {
+			dev_err(&pdev->dev, "no sgmiisys regmap found\n");
+			return PTR_ERR(eth->sgmiisys);
+		}
 	}
 
 	if (eth->soc->required_pctl) {
@@ -2651,8 +2642,7 @@ static const struct mtk_soc_data mt7621_data = {
 };
 
 static const struct mtk_soc_data mt7622_data = {
-	.ana_rgc3 = 0x2028,
-	.caps = MTK_GMAC_SHARED_SGMII | MTK_GMAC1_ESW | MTK_HWLRO,
+	.caps = MTK_DUAL_GMAC_SHARED_SGMII | MTK_GMAC1_ESW | MTK_HWLRO,
 	.required_clks = MT7622_CLKS_BITMAP,
 	.required_pctl = false,
 };
