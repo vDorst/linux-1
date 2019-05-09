@@ -190,20 +190,23 @@ static void mtk_sgmii_setup_mode_force(struct mtk_eth *eth, int speed)
 {
 	unsigned int val;
 
+	/* Set phy speed */
 	regmap_read(eth->sgmiisys, SGMSYS_ANA_RG_CS3, &val);
 	val &= ~RG_PHY_SPEED_MASK;
-	if (speed == SPEED_2500)
+	if (speed == SPEED_2500) {
 		/* SGMII 2.5G */
 		val |= RG_PHY_SPEED_3_125G;
+		pr_info("%s: SGMII: 2.5GBIT! reg: 0x%x\n", __func__, val);
+	}
 	regmap_write(eth->sgmiisys, SGMSYS_ANA_RG_CS3, val);
 
 	/* disable SGMII AN */
 	regmap_read(eth->sgmiisys, SGMSYS_PCS_CONTROL_1, &val);
-	val &= ~BIT(12);
+	val &= ~SGMII_AN_ENABLE;
 	regmap_write(eth->sgmiisys, SGMSYS_PCS_CONTROL_1, val);
 
 	/* SGMII force mode setting */
-	val = 0x31120019;
+	val = SGMII_FIXED_LINK;
 	regmap_write(eth->sgmiisys, SGMSYS_SGMII_MODE, val);
 
 	/* Release PHYA power down state */
