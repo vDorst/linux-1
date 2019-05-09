@@ -407,6 +407,13 @@
 /* Register to auto-negotiation restart */
 #define SGMSYS_PCS_CONTROL_1	0x0
 #define SGMII_AN_RESTART	BIT(9)
+#define SGMII_ISOLATE		BIT(10)
+#define SGMII_AN_ENABLE		BIT(12)
+#define SGMII_LINK_STATYS	BIT(18)
+#define SGMII_AN_ABILITY	BIT(19)
+#define SGMII_AN_COMPLETE	BIT(21)
+#define SGMII_PCS_FAULT		BIT(23)
+#define SGMII_AN_EXPANSION_CLR	BIT(30)
 
 /* Register to programmable link timer, the unit in 2 * 8ns */
 #define SGMSYS_PCS_LINK_TIMER	0x18
@@ -414,7 +421,17 @@
 
 /* Register to control remote fault */
 #define SGMSYS_SGMII_MODE	0x20
+#define SGMII_LSB		BIT(0)
+#define SGMII_SPEED_10		0x0
+#define SGMII_SPEED_100		BIT(2)
+#define SGMII_SPEED_1000	BIT(3)
+#define SGMII_DUPLEX_FULL	BIT(4)
 #define SGMII_REMOTE_FAULT_DIS	BIT(8)
+#define SGMII_CODE_SYNC_SET_VAL	BIT(9)
+#define SGMII_CODE_SYNC_SET_EN	BIT(10)
+#define SGMII_SEND_AN_ERROR_EN	BIT(11)
+#define SGMII_FIXED_LINK	(SGMII_LSB | SGMII_SPEED_1000 | \
+				 SGMII_DUPLEX_FULL)
 
 /* Register to set SGMII speed, ANA RG_ Control Signals III*/
 #define SGMSYS_ANA_RG_CS3	0x2028
