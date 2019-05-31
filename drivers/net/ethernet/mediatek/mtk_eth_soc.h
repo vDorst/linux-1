@@ -842,6 +842,7 @@ struct mtk_mac {
 	phy_interface_t			interface;
 	struct device_node		*of_node;
 	struct phylink 			*phylink;
+	struct phylink_config		phylink_config;
 	struct mtk_eth			*hw;
 	struct mtk_hw_stats		*hw_stats;
 	__be32				hwlro_ip[MTK_MAX_LRO_IP_CNT];
