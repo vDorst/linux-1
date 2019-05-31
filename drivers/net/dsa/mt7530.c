@@ -1629,31 +1629,6 @@ static u32 mt7530_get_phy_flags(struct dsa_switch *ds, int port)
 	return 0;
 }
 
-static void mt7530_adjust_link(struct dsa_switch *ds, int port,
-			       struct phy_device *phydev)
-{
-	struct mt7530_priv *priv = ds->priv;
-	struct phylink_link_state state;
-	unsigned int mode = MLO_AN_PHY;
-
-	if (phy_is_pseudo_fixed_link(phydev))
-		mode = MLO_AN_FIXED;
-
-	linkmode_copy(state.advertising, phydev->advertising);
-	linkmode_copy(state.lp_advertising,phydev->lp_advertising);
-	state.speed = phydev->speed;
-	state.duplex = phydev->duplex;
-	state.pause = phydev->pause;
-	state.link = phydev->link;
-	state.an_enabled = phydev->autoneg;
-	state.an_complete = phydev->link;
-	state.interface = phydev->interface;
-
-	dev_info(priv->dev, "mt7530_adjust_link: P%d phy-mode %s\n", port, phy_modes(state.interface));
-
-	mt7530_phylink_mac_config(ds, port, mode, &state);
-}
-
 static const struct dsa_switch_ops mt7530_switch_ops = {
 	.get_tag_protocol	= mtk_get_tag_protocol,
 	.setup			= mt7530_setup,
@@ -1663,7 +1638,6 @@ static const struct dsa_switch_ops mt7530_switch_ops = {
 	.phy_write		= mt7530_phy_write,
 	.get_ethtool_stats	= mt7530_get_ethtool_stats,
 	.get_sset_count		= mt7530_get_sset_count,
-	.adjust_link		= mt7530_adjust_link,
 	.port_enable		= mt7530_port_enable,
 	.port_disable		= mt7530_port_disable,
 	.port_stp_state_set	= mt7530_stp_state_set,
