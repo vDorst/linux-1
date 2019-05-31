@@ -237,7 +237,7 @@ static void mtk_sgmii_setup_mode_an(struct mtk_eth *eth)
 }
 
 static void mtk_gmac_sgmii_hw_setup(struct mtk_eth *eth, int mac_id,
-				    unsigned int mode, 
+				    unsigned int mode,
 				    const struct phylink_link_state *state)
 {
 	u32 val;
@@ -278,10 +278,11 @@ static void mtk_gmac_sgmii_hw_setup(struct mtk_eth *eth, int mac_id,
 	}
 }
 
-static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
+static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 			   const struct phylink_link_state *state)
 {
-	struct mtk_mac *mac = netdev_priv(ndev);
+	struct mtk_mac *mac = container_of(config, struct mtk_mac,
+					   phylink_config);
 	struct mtk_eth *eth = mac->hw;
 
 	u32 ge_mode = 0, val;
@@ -383,10 +384,11 @@ err_phy:
 	return;
 }
 
-static int mtk_mac_link_state(struct net_device *ndev,
+static int mtk_mac_link_state(struct phylink_config *config,
 			      struct phylink_link_state *state)
 {
-	struct mtk_mac *mac = netdev_priv(ndev);
+	struct mtk_mac *mac = container_of(config, struct mtk_mac,
+					   phylink_config);
 	u32 pmsr;
 
 	pmsr = mtk_r32(mac->hw, MTK_MAC_MSR(mac->id));
@@ -420,15 +422,16 @@ static int mtk_mac_link_state(struct net_device *ndev,
 	return 1;
 }
 
-static void mtk_mac_an_restart(struct net_device *ndev)
+static void mtk_mac_an_restart(struct phylink_config *config)
 {
 	pr_warn("mtk_mac_an_restart\n");
 }
 
-static void mtk_mac_link_down(struct net_device *ndev, unsigned int mode,
+static void mtk_mac_link_down(struct phylink_config *config, unsigned int mode,
 			      phy_interface_t interface)
 {
-	struct mtk_mac *mac = netdev_priv(ndev);
+	struct mtk_mac *mac = container_of(config, struct mtk_mac,
+					   phylink_config);
 
 	if (mode == MLO_AN_FIXED) {
 		pr_warn("mtk_mac_link_down: GM%d\n", mac->id);
@@ -436,11 +439,12 @@ static void mtk_mac_link_down(struct net_device *ndev, unsigned int mode,
 	}
 }
 
-static void mtk_mac_link_up(struct net_device *ndev, unsigned int mode,
+static void mtk_mac_link_up(struct phylink_config *config, unsigned int mode,
 			    phy_interface_t interface,
 			    struct phy_device *phy)
 {
-	struct mtk_mac *mac = netdev_priv(ndev);
+	struct mtk_mac *mac = container_of(config, struct mtk_mac,
+                                           phylink_config);
 
 	if (mode == MLO_AN_FIXED) {
 		pr_warn("mtk_mac_link_up: GM%d\n", mac->id);
@@ -448,11 +452,13 @@ static void mtk_mac_link_up(struct net_device *ndev, unsigned int mode,
 	}
 }
 
-static void mtk_validate(struct net_device *ndev, unsigned long *supported,
-			    struct phylink_link_state *state)
+static void mtk_validate(struct phylink_config *config,
+			 unsigned long *supported,
+			 struct phylink_link_state *state)
 {
 	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
-	struct mtk_mac *mac = netdev_priv(ndev);
+        struct mtk_mac *mac = container_of(config, struct mtk_mac,
+                                           phylink_config);
 	struct mtk_eth *eth = mac->hw;
 
 	pr_warn("mtk_validate: %s\n", phy_modes(state->interface));
@@ -2582,7 +2588,11 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	mac->interface = PHY_INTERFACE_MODE_NA;
 	mac->mode = MLO_AN_PHY;
 
-	phylink = phylink_create(eth->netdev[id], of_fwnode_handle(mac->of_node),
+	mac->phylink_config.dev = &eth->netdev[id]->dev;
+	mac->phylink_config.type = PHYLINK_NETDEV;
+
+	phylink = phylink_create(&mac->phylink_config,
+				 of_fwnode_handle(mac->of_node),
 				 phy_mode, &mtk_phylink_ops);
 	if (IS_ERR(phylink)) {
 		err = PTR_ERR(phylink);
