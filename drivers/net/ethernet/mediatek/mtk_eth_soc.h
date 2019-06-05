@@ -20,6 +20,7 @@
 #include <linux/of_net.h>
 #include <linux/u64_stats_sync.h>
 #include <linux/refcount.h>
+#include <linux/phylink.h>
 
 #define MTK_QDMA_PAGE_SIZE	2048
 #define	MTK_MAX_RX_LENGTH	1536
@@ -413,6 +414,13 @@
 /* Register to auto-negotiation restart */
 #define SGMSYS_PCS_CONTROL_1	0x0
 #define SGMII_AN_RESTART	BIT(9)
+#define SGMII_ISOLATE		BIT(10)
+#define SGMII_AN_ENABLE		BIT(12)
+#define SGMII_LINK_STATYS	BIT(18)
+#define SGMII_AN_ABILITY	BIT(19)
+#define SGMII_AN_COMPLETE	BIT(21)
+#define SGMII_PCS_FAULT		BIT(23)
+#define SGMII_AN_EXPANSION_CLR	BIT(30)
 
 /* Register to programmable link timer, the unit in 2 * 8ns */
 #define SGMSYS_PCS_LINK_TIMER	0x18
@@ -420,7 +428,23 @@
 
 /* Register to control remote fault */
 #define SGMSYS_SGMII_MODE	0x20
+#define SGMII_LSB		BIT(0)
+#define SGMII_SPEED_10		0x0
+#define SGMII_SPEED_100		BIT(2)
+#define SGMII_SPEED_1000	BIT(3)
+#define SGMII_DUPLEX_FULL	BIT(4)
 #define SGMII_REMOTE_FAULT_DIS	BIT(8)
+#define SGMII_CODE_SYNC_SET_VAL	BIT(9)
+#define SGMII_CODE_SYNC_SET_EN	BIT(10)
+#define SGMII_SEND_AN_ERROR_EN	BIT(11)
+#define SGMII_FIXED_LINK	(SGMII_LSB | SGMII_SPEED_1000 | \
+				 SGMII_DUPLEX_FULL)
+
+/* Register to set SGMII speed, ANA RG_ Control Signals III*/
+#define SGMSYS_ANA_RG_CS3	0x2028
+#define RG_PHY_SPEED_MASK	(BIT(2) | BIT(3))
+#define RG_PHY_SPEED_1_25G	0x0
+#define RG_PHY_SPEED_3_125G	BIT(2)
 
 /* Register to power up QPHY */
 #define SGMSYS_QPHY_PWR_STATE_CTRL 0xe8
@@ -642,6 +666,7 @@ enum mtk_eth_path {
 #define MTK_SHARED_SGMII		BIT(7)
 #define MTK_HWLRO			BIT(8)
 #define MTK_SHARED_INT			BIT(9)
+#define MTK_GMAC1_TRGMII_MT7621		BIT(10)
 
 /* Supported path present on SoCs */
 #define MTK_PATH_BIT(x)         BIT((x) + 10)
@@ -690,19 +715,6 @@ enum mtk_eth_path {
 /* 0: GMACx -> GEPHY, 1: GMACx -> SGMII where x is 1 or 2 */
 #define MTK_MUX_GMAC12_TO_GEPHY_SGMII   \
 	(MTK_MUX_BIT(MTK_ETH_MUX_GMAC12_TO_GEPHY_SGMII) | MTK_MUX)
-
-#define MTK_TRGMII			BIT(0)
-#define MTK_GMAC1_TRGMII		(BIT(1) | MTK_TRGMII)
-#define MTK_ESW				BIT(4)
-#define MTK_GMAC1_ESW			(BIT(5) | MTK_ESW)
-#define MTK_SGMII			BIT(8)
-#define MTK_GMAC1_SGMII			(BIT(9) | MTK_SGMII)
-#define MTK_GMAC2_SGMII			(BIT(10) | MTK_SGMII)
-#define MTK_DUAL_GMAC_SHARED_SGMII	(BIT(11) | MTK_GMAC1_SGMII | \
-					 MTK_GMAC2_SGMII)
-#define MTK_HWLRO			BIT(12)
-#define MTK_SHARED_INT			BIT(13)
-#define MTK_GMAC1_TRGMII_MT7621		BIT(14)
 
 #define MTK_HAS_CAPS(caps, _x)		(((caps) & (_x)) == (_x))
 
@@ -807,8 +819,8 @@ struct mtk_eth {
 	u32				msg_enable;
 	unsigned long			sysclk;
 	struct regmap			*ethsys;
-	struct regmap                   *infra;
-	struct mtk_sgmii                *sgmii;
+	struct regmap			*infra;
+	struct mtk_sgmii		*sgmii;
 	struct regmap			*pctl;
 	bool				hwlro;
 	refcount_t			dma_refcnt;
@@ -840,6 +852,7 @@ struct mtk_eth {
 struct mtk_mac {
 	int				id;
 	phy_interface_t			interface;
+	unsigned int			mode;
 	struct device_node		*of_node;
 	struct phylink 			*phylink;
 	struct phylink_config		phylink_config;

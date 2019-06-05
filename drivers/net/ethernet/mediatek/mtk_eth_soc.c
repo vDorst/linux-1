@@ -188,85 +188,28 @@ static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth, int speed)
 	mtk_w32(eth, val, TRGMII_TCK_CTRL);
 }
 
-static void mtk_phy_link_adjust(struct net_device *dev)
-{
-	struct mtk_mac *mac = netdev_priv(dev);
-	u16 lcl_adv = 0, rmt_adv = 0;
-	u8 flowctrl;
-	u32 mcr = MAC_MCR_MAX_RX_1536 | MAC_MCR_IPG_CFG |
-		  MAC_MCR_FORCE_MODE | MAC_MCR_TX_EN |
-		  MAC_MCR_RX_EN | MAC_MCR_BACKOFF_EN |
-		  MAC_MCR_BACKPR_EN;
-
-	if (unlikely(test_bit(MTK_RESETTING, &mac->hw->state)))
-		return;
-
-	switch (dev->phydev->speed) {
-	case SPEED_1000:
-		mcr |= MAC_MCR_SPEED_1000;
-		break;
-	case SPEED_100:
-		mcr |= MAC_MCR_SPEED_100;
-		break;
-	}
-
-	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII) &&
-	    !mac->id && !mac->trgmii)
-		mtk_gmac0_rgmii_adjust(mac->hw, dev->phydev->speed);
-
-	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII_MT7621) &&
-	    !mac->id)
-		mt7621_gmac0_rgmii_adjust(mac->hw, mac->trgmii);
-
-	if (dev->phydev->link)
-		mcr |= MAC_MCR_FORCE_LINK;
-
-	if (dev->phydev->duplex) {
-		mcr |= MAC_MCR_FORCE_DPX;
-
-		if (dev->phydev->pause)
-			rmt_adv = LPA_PAUSE_CAP;
-		if (dev->phydev->asym_pause)
-			rmt_adv |= LPA_PAUSE_ASYM;
-
-		lcl_adv = linkmode_adv_to_lcl_adv_t(dev->phydev->advertising);
-		flowctrl = mii_resolve_flowctrl_fdx(lcl_adv, rmt_adv);
-
-		if (flowctrl & FLOW_CTRL_TX)
-			mcr |= MAC_MCR_FORCE_TX_FC;
-		if (flowctrl & FLOW_CTRL_RX)
-			mcr |= MAC_MCR_FORCE_RX_FC;
-
-		netif_dbg(mac->hw, link, dev, "rx pause %s, tx pause %s\n",
-			  flowctrl & FLOW_CTRL_RX ? "enabled" : "disabled",
-			  flowctrl & FLOW_CTRL_TX ? "enabled" : "disabled");
-	}
-
-	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
-}
-
 static void mtk_gmac_sgmii_hw_setup(struct mtk_eth *eth, int mac_id)
 {
 	u32 val;
 
 	/* Setup the link timer and QPHY power up inside SGMIISYS */
-	regmap_write(eth->sgmiisys, SGMSYS_PCS_LINK_TIMER,
+	regmap_write(eth->sgmii->regmap[mac_id], SGMSYS_PCS_LINK_TIMER,
 		     SGMII_LINK_TIMER_DEFAULT);
 
-	regmap_read(eth->sgmiisys, SGMSYS_SGMII_MODE, &val);
+	regmap_read(eth->sgmii->regmap[mac_id], SGMSYS_SGMII_MODE, &val);
 	val |= SGMII_REMOTE_FAULT_DIS;
-	regmap_write(eth->sgmiisys, SGMSYS_SGMII_MODE, val);
+	regmap_write(eth->sgmii->regmap[mac_id], SGMSYS_SGMII_MODE, val);
 
-	regmap_read(eth->sgmiisys, SGMSYS_PCS_CONTROL_1, &val);
+	regmap_read(eth->sgmii->regmap[mac_id], SGMSYS_PCS_CONTROL_1, &val);
 	val |= SGMII_AN_RESTART;
-	regmap_write(eth->sgmiisys, SGMSYS_PCS_CONTROL_1, val);
+	regmap_write(eth->sgmii->regmap[mac_id], SGMSYS_PCS_CONTROL_1, val);
 
-	regmap_read(eth->sgmiisys, SGMSYS_QPHY_PWR_STATE_CTRL, &val);
+	regmap_read(eth->sgmii->regmap[mac_id], SGMSYS_QPHY_PWR_STATE_CTRL, &val);
 	val &= ~SGMII_PHYA_PWD;
-	regmap_write(eth->sgmiisys, SGMSYS_QPHY_PWR_STATE_CTRL, val);
+	regmap_write(eth->sgmii->regmap[mac_id], SGMSYS_QPHY_PWR_STATE_CTRL, val);
 
 	/* Determine MUX for which GMAC uses the SGMII interface */
-	if (MTK_HAS_CAPS(eth->soc->caps, MTK_DUAL_GMAC_SHARED_SGMII)) {
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SHARED_SGMII)) {
 		regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
 		val &= ~SYSCFG0_SGMII_MASK;
 		val |= !mac_id ? SYSCFG0_SGMII_GMAC1 : SYSCFG0_SGMII_GMAC2;
@@ -279,7 +222,7 @@ static void mtk_gmac_sgmii_hw_setup(struct mtk_eth *eth, int mac_id)
 	/* Setup the GMAC1 going through SGMII path when SoC also support
 	 * ESW on GMAC1
 	 */
-	if (MTK_HAS_CAPS(eth->soc->caps, MTK_GMAC1_ESW | MTK_GMAC1_SGMII) &&
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_GDM1_ESW | MTK_GMAC1_SGMII) &&
 	    !mac_id) {
 		mtk_w32(eth, 0, MTK_MAC_MISC);
 		dev_info(eth->dev, "setup gmac1 going through sgmii");
@@ -299,8 +242,9 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		  MAC_MCR_BACKPR_EN;
 
 	if (mac->interface != state->interface) {
-		err = mtk_setup_hw_path(eth, mac->id, of_get_phy_mode(np));
-		if (err)
+		/* Setup path for mt7629 */
+		if (MTK_HAS_CAPS(eth->soc->caps, MTK_INFRA) &&
+		    mtk_setup_hw_path(eth, mac->id, mac->interface))
 			goto err_phy;
 
 		if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII_MT7621))
@@ -313,7 +257,7 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 				goto err_phy;
 
 			/* Setup GMAC clock for TRGMII mode */
-			if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII))
+			if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_TRGMII))
 				mtk_gmac0_rgmii_adjust(mac->hw, state->speed);
 		case PHY_INTERFACE_MODE_RGMII_TXID:
 		case PHY_INTERFACE_MODE_RGMII_RXID:
@@ -349,9 +293,23 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		pr_warn("mtk_mac_config_hw: GMAC%d: mode %s\n", mac->id, phy_modes(state->interface));
 	}
 
+	/* Setup SGMII */
+	if (mac->interface == PHY_INTERFACE_MODE_SGMII) {
+		if (mode == mac->mode)
+			return;
+		mac->mode = mode;
+		if (!eth->ethsys) {
+			pr_warn("mtk_mac_config_hw: No ethsys set in DTS!\n");
+			return;
+		}
+		mtk_gmac_sgmii_hw_setup(eth, mac->id);
+	}
+
 	/* Setup mac */
 	if (!state->an_enabled || mode == MLO_AN_FIXED) {
 		mcr |= MAC_MCR_FORCE_MODE;
+		if (state->speed == SPEED_2500)
+			mcr |= MAC_MCR_SPEED_1000;
 		if (state->speed == SPEED_1000)
 			mcr |= MAC_MCR_SPEED_1000;
 		if (state->speed == SPEED_100)
@@ -462,10 +420,14 @@ static void mtk_validate(struct phylink_config *config,
 
 	pr_warn("mtk_validate: %s\n", phy_modes(state->interface));
 
-	/* We only support QSGMII, SGMII, 802.3z and RGMII modes */
+	/* We only support RGMII & TRGMII modes */
 	if (state->interface != PHY_INTERFACE_MODE_NA &&
 	    state->interface != PHY_INTERFACE_MODE_TRGMII &&
-	    !phy_interface_mode_is_rgmii(state->interface)) {
+	    !phy_interface_mode_is_rgmii(state->interface) &&
+	    /* MT7622 also supports SGMII */
+	    !(MTK_HAS_CAPS(eth->soc->caps, MTK_SGMII) &&
+		(state->interface != PHY_INTERFACE_MODE_SGMII ||
+		 !phy_interface_mode_is_8023z(state->interface)))) {
 		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
 		pr_warn("mtk_validate: unsupported interface!:%s\n", phy_modes(state->interface));
 		return;
@@ -478,12 +440,31 @@ static void mtk_validate(struct phylink_config *config,
 
 	phylink_set(mask, MII);
 
-	phylink_set(mask, 10baseT_Half);
-	phylink_set(mask, 10baseT_Full);
-	phylink_set(mask, 100baseT_Half);
-	phylink_set(mask, 100baseT_Full);
-	phylink_set(mask, 1000baseT_Full);
-	phylink_set(mask, 1000baseT_Full);
+	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SGMII)) {
+		phylink_set(mask, 10baseT_Half);
+		phylink_set(mask, 10baseT_Full);
+		phylink_set(mask, 100baseT_Half);
+		phylink_set(mask, 100baseT_Full);
+		phylink_set(mask, 1000baseT_Half);
+		phylink_set(mask, 1000baseT_Full);
+	} else {
+		/* Half-duplex at speeds higher than 100Mbit is unsupported */
+		if (state->interface != PHY_INTERFACE_MODE_2500BASEX) {
+			phylink_set(mask, 1000baseT_Full);
+			phylink_set(mask, 1000baseX_Full);
+		}
+		if (state->interface == PHY_INTERFACE_MODE_2500BASEX) {
+			phylink_set(mask, 2500baseX_Full);
+		}
+
+		if (!phy_interface_mode_is_8023z(state->interface)) {
+			/* 10M and 100M are only supported in non-802.3z mode */
+			phylink_set(mask, 10baseT_Half);
+			phylink_set(mask, 10baseT_Full);
+			phylink_set(mask, 100baseT_Half);
+			phylink_set(mask, 100baseT_Full);
+		}
+	}
 
 	bitmap_and(supported, supported, mask,
 		   __ETHTOOL_LINK_MODE_MASK_NBITS);
@@ -2563,6 +2544,7 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 
 	/* mac config is not set */
 	mac->interface = PHY_INTERFACE_MODE_NA;
+	mac->mode = MLO_AN_PHY;
 
 	mac->phylink_config.dev = &eth->netdev[id]->dev;
 	mac->phylink_config.type = PHYLINK_NETDEV;
