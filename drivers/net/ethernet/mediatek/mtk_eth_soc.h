@@ -395,7 +395,6 @@
 #define SYSCFG0_SGMII_GMAC1_V2 BIT(9)
 #define SYSCFG0_SGMII_GMAC2_V2 BIT(8)
 
-
 #define	NUM_TRGMII_CTRL			5
 
 /* ethernet subsystem clock register */
@@ -853,6 +852,8 @@ struct mtk_mac {
 	int				id;
 	phy_interface_t			interface;
 	unsigned int			mode;
+	int				speed;
+	u32				mcr_old;
 	struct device_node		*of_node;
 	struct phylink 			*phylink;
 	struct phylink_config		phylink_config;
@@ -874,7 +875,8 @@ u32 mtk_r32(struct mtk_eth *eth, unsigned reg);
 int mtk_sgmii_init(struct mtk_sgmii *ss, struct device_node *np,
 		   u32 ana_rgc3);
 int mtk_sgmii_setup_mode_an(struct mtk_sgmii *ss, int id);
-int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id);
-int mtk_setup_hw_path(struct mtk_eth *eth, int mac_id, int phymode);
+int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id, int speed);
+int mtk_setup_hw_path(struct mtk_eth *eth, int mac_id,
+		      const struct phylink_link_state *state);
 
 #endif /* MTK_ETH_H */

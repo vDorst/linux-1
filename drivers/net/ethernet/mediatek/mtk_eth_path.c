@@ -210,7 +210,8 @@ out:
 	return err;
 }
 
-static int mtk_gmac_sgmii_path_setup(struct mtk_eth *eth, int mac_id)
+static int mtk_gmac_sgmii_path_setup(struct mtk_eth *eth, int mac_id,
+				     const struct phylink_link_state *state)
 {
 	unsigned int val = 0;
 	int sid, err, path;
@@ -235,10 +236,10 @@ static int mtk_gmac_sgmii_path_setup(struct mtk_eth *eth, int mac_id)
 	sid = (MTK_HAS_CAPS(eth->soc->caps, MTK_SHARED_SGMII)) ? 0 : mac_id;
 
 	/* Setup SGMIISYS with the determined property */
-	if (MTK_HAS_FLAGS(eth->sgmii->flags[sid], MTK_SGMII_PHYSPEED_AN))
+	if (state->an_enabled)
 		err = mtk_sgmii_setup_mode_an(eth->sgmii, sid);
 	else
-		err = mtk_sgmii_setup_mode_force(eth->sgmii, sid);
+		err = mtk_sgmii_setup_mode_force(eth->sgmii, sid, state->speed);
 
 	if (err)
 		return err;
@@ -282,11 +283,12 @@ static int mtk_gmac_rgmii_path_setup(struct mtk_eth *eth, int mac_id)
 	return 0;
 }
 
-int mtk_setup_hw_path(struct mtk_eth *eth, int mac_id, int phymode)
+int mtk_setup_hw_path(struct mtk_eth *eth, int mac_id,
+		      const struct phylink_link_state *state)
 {
 	int err;
 
-	switch (phymode) {
+	switch (state->interface) {
 	case PHY_INTERFACE_MODE_TRGMII:
 	case PHY_INTERFACE_MODE_RGMII_TXID:
 	case PHY_INTERFACE_MODE_RGMII_RXID:
@@ -303,7 +305,7 @@ int mtk_setup_hw_path(struct mtk_eth *eth, int mac_id, int phymode)
 		break;
 	case PHY_INTERFACE_MODE_SGMII:
 		if (MTK_HAS_CAPS(eth->soc->caps, MTK_SGMII)) {
-			err = mtk_gmac_sgmii_path_setup(eth, mac_id);
+			err = mtk_gmac_sgmii_path_setup(eth, mac_id, state);
 			if (err)
 				return err;
 		}

@@ -188,46 +188,6 @@ static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth, int speed)
 	mtk_w32(eth, val, TRGMII_TCK_CTRL);
 }
 
-static void mtk_gmac_sgmii_hw_setup(struct mtk_eth *eth, int mac_id)
-{
-	u32 val;
-
-	/* Setup the link timer and QPHY power up inside SGMIISYS */
-	regmap_write(eth->sgmii->regmap[mac_id], SGMSYS_PCS_LINK_TIMER,
-		     SGMII_LINK_TIMER_DEFAULT);
-
-	regmap_read(eth->sgmii->regmap[mac_id], SGMSYS_SGMII_MODE, &val);
-	val |= SGMII_REMOTE_FAULT_DIS;
-	regmap_write(eth->sgmii->regmap[mac_id], SGMSYS_SGMII_MODE, val);
-
-	regmap_read(eth->sgmii->regmap[mac_id], SGMSYS_PCS_CONTROL_1, &val);
-	val |= SGMII_AN_RESTART;
-	regmap_write(eth->sgmii->regmap[mac_id], SGMSYS_PCS_CONTROL_1, val);
-
-	regmap_read(eth->sgmii->regmap[mac_id], SGMSYS_QPHY_PWR_STATE_CTRL, &val);
-	val &= ~SGMII_PHYA_PWD;
-	regmap_write(eth->sgmii->regmap[mac_id], SGMSYS_QPHY_PWR_STATE_CTRL, val);
-
-	/* Determine MUX for which GMAC uses the SGMII interface */
-	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SHARED_SGMII)) {
-		regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
-		val &= ~SYSCFG0_SGMII_MASK;
-		val |= !mac_id ? SYSCFG0_SGMII_GMAC1 : SYSCFG0_SGMII_GMAC2;
-		regmap_write(eth->ethsys, ETHSYS_SYSCFG0, val);
-
-		dev_info(eth->dev, "setup shared sgmii for gmac=%d\n",
-			 mac_id);
-	}
-
-	/* Setup the GMAC1 going through SGMII path when SoC also support
-	 * ESW on GMAC1
-	 */
-	if (MTK_HAS_CAPS(eth->soc->caps, MTK_GDM1_ESW | MTK_GMAC1_SGMII) &&
-	    !mac_id) {
-		mtk_w32(eth, 0, MTK_MAC_MISC);
-		dev_info(eth->dev, "setup gmac1 going through sgmii");
-	}
-}
 
 static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 			   const struct phylink_link_state *state)
@@ -244,7 +204,7 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 	if (mac->interface != state->interface) {
 		/* Setup path for mt7629 */
 		if (MTK_HAS_CAPS(eth->soc->caps, MTK_INFRA) &&
-		    mtk_setup_hw_path(eth, mac->id, mac->interface))
+		    mtk_setup_hw_path(eth, mac->id, state))
 			goto err_phy;
 
 		if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII_MT7621))
@@ -259,15 +219,13 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 			/* Setup GMAC clock for TRGMII mode */
 			if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_TRGMII))
 				mtk_gmac0_rgmii_adjust(mac->hw, state->speed);
+
 		case PHY_INTERFACE_MODE_RGMII_TXID:
 		case PHY_INTERFACE_MODE_RGMII_RXID:
 		case PHY_INTERFACE_MODE_RGMII_ID:
 		case PHY_INTERFACE_MODE_RGMII:
 			break;
-		case PHY_INTERFACE_MODE_SGMII:
-			if (MTK_HAS_CAPS(eth->soc->caps, MTK_SGMII))
-				mtk_gmac_sgmii_hw_setup(eth, mac->id);
-			break;
+
 		case PHY_INTERFACE_MODE_MII:
 			ge_mode = 1;
 			break;
@@ -297,19 +255,14 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 	if (mac->interface == PHY_INTERFACE_MODE_SGMII) {
 		if (mode == mac->mode)
 			return;
+		// mtk_gmac_sgmii_path_setup(eth, mac->id, state);
 		mac->mode = mode;
-		if (!eth->ethsys) {
-			pr_warn("mtk_mac_config_hw: No ethsys set in DTS!\n");
-			return;
-		}
-		mtk_gmac_sgmii_hw_setup(eth, mac->id);
+		return;
 	}
 
 	/* Setup mac */
 	if (!state->an_enabled || mode == MLO_AN_FIXED) {
 		mcr |= MAC_MCR_FORCE_MODE;
-		if (state->speed == SPEED_2500)
-			mcr |= MAC_MCR_SPEED_1000;
 		if (state->speed == SPEED_1000)
 			mcr |= MAC_MCR_SPEED_1000;
 		if (state->speed == SPEED_100)
@@ -327,11 +280,12 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 	}
 
 	/* Only update when needed! */
-	if (mtk_r32(mac->hw, MTK_MAC_MCR(mac->id)) != mcr) {
+	if (mac->mcr_old != mcr) {
 		mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
 		pr_warn("%s: GMAC%d: M%d: (%s) mcr:%x pause=%x\n", __func__,
 			mac->id, mode, phy_modes(state->interface), mcr,
 			state->pause);
+		mac->mcr_old = mcr;
 	}
 	return;
 
@@ -2545,6 +2499,8 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	/* mac config is not set */
 	mac->interface = PHY_INTERFACE_MODE_NA;
 	mac->mode = MLO_AN_PHY;
+	mac->speed = SPEED_UNKNOWN;
+	mac->mcr_old = 0;
 
 	mac->phylink_config.dev = &eth->netdev[id]->dev;
 	mac->phylink_config.type = PHYLINK_NETDEV;
