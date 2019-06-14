@@ -20,6 +20,8 @@
 #include <linux/etherdevice.h>
 #include <linux/of_gpio.h>
 #include <linux/gpio/consumer.h>
+#include <linux/property.h>
+#include <linux/sfp.h>
 
 #define AT803X_INTR_ENABLE			0x12
 #define AT803X_INTR_ENABLE_AUTONEG_ERR		BIT(15)
@@ -109,6 +111,10 @@ static struct at803x_phy_hw_stat at803x_hw_stats[] = {
 };
 
 struct at803x_priv {
+	struct sfp_bus *sfp_bus;
+	bool sfp_bus_attached;
+	enum phy_state state;
+	bool running;
 	bool phy_reset:1;
 };
 
@@ -322,6 +328,56 @@ static int at803x_resume(struct phy_device *phydev)
 	return phy_modify(phydev, MII_BMCR, BMCR_PDOWN | BMCR_ISOLATE, 0);
 }
 
+
+static void at803x_sfp_attach(void *upstream, struct sfp_bus *bus)
+{
+	struct phy_device *phydev = upstream;
+	struct at803x_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
+
+	if (phydev->attached_dev) {
+		phydev->attached_dev->sfp_bus = bus;
+		priv->sfp_bus_attached = true;
+	}
+	priv->sfp_bus_attached = false;
+}
+
+static void at803x_sfp_detach(void *upstream, struct sfp_bus *bus)
+{
+	struct phy_device *phydev = upstream;
+	struct at803x_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
+
+	if (phydev->attached_dev)
+		phydev->attached_dev->sfp_bus = NULL;
+	priv->sfp_bus_attached = false;
+}
+
+static int at803x_sfp_insert(void *upstream, const struct sfp_eeprom_id *id)
+{
+	struct phy_device *phydev = upstream;
+	struct at803x_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
+	__ETHTOOL_DECLARE_LINK_MODE_MASK(support) = { 0, };
+	phy_interface_t iface;
+
+	sfp_parse_support(priv->sfp_bus, id, support);
+	iface = sfp_select_interface(priv->sfp_bus, id, support);
+
+	if (iface != PHY_INTERFACE_MODE_SGMII &&
+	    iface != PHY_INTERFACE_MODE_1000BASEX) {
+		dev_info(&phydev->mdio.dev, "incompatible SFP module inserted; Only SGMII/1000BASEX are supported!\n");
+		return -EINVAL;
+	}
+
+	dev_info(&phydev->mdio.dev, "SFP interface %s", phy_modes(iface));
+
+	return 0;
+}
+
+static const struct sfp_upstream_ops at803x_sfp_ops = {
+	.attach = at803x_sfp_attach,
+	.detach = at803x_sfp_detach,
+	.module_insert = at803x_sfp_insert,
+};
+
 static int at803x_probe(struct phy_device *phydev)
 {
 	struct device *dev = &phydev->mdio.dev;
@@ -332,6 +388,21 @@ static int at803x_probe(struct phy_device *phydev)
 		return -ENOMEM;
 
 	phydev->priv = priv;
+	dev_set_drvdata(&phydev->mdio.dev, priv);
+
+	if (phydev->mdio.dev.fwnode) {
+		struct fwnode_reference_args ref;
+		int ret;
+
+		ret = fwnode_property_get_reference_args(phydev->mdio.dev.fwnode,
+							 "sfp", NULL, 0, 0,
+							 &ref);
+		if (ret == 0) {
+			priv->sfp_bus = sfp_register_upstream(ref.fwnode,
+						      phydev, &at803x_sfp_ops);
+			fwnode_handle_put(ref.fwnode);
+		}
+	}
 
 	return 0;
 }
@@ -377,6 +448,7 @@ static inline u32 linkmode_adv_to_fiber_adv_t(unsigned long *advertise)
 
 static int at803x_config_init(struct phy_device *phydev)
 {
+	struct at803x_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
 	int ret;
 	u32 v;
 	__ETHTOOL_DECLARE_LINK_MODE_MASK(supported) = { 0, };
@@ -385,6 +457,10 @@ static int at803x_config_init(struct phy_device *phydev)
 		phydev->interface == PHY_INTERFACE_MODE_SGMII) ||
 		(at803x_mode(phydev) == AT803X_MODE_FIBER) )
 	{
+
+		if (priv->sfp_bus_attached)
+			phydev->attached_dev->sfp_bus = priv->sfp_bus;
+
 		// pr_warn("at803x_config_init: FIBER: %s\n", phy_modes(phydev->interface));
 		v = phy_read(phydev, AT803X_REG_CHIP_CONFIG);
 		/* select SGMII/fiber page */
@@ -500,6 +576,27 @@ static void at803x_link_change_notify(struct phy_device *phydev)
 
 		phydev_dbg(phydev, "%s(): phy was reset\n", __func__);
 	}
+}
+
+/* For at8031/33 */
+static void at8031_link_change_notify(struct phy_device *phydev)
+{
+	struct at803x_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
+	enum phy_state state = phydev->state;
+	bool running;
+
+	if (priv->sfp_bus && priv->state != state) {
+                priv->state = state;
+
+                running = state >= PHY_UP && state < PHY_HALTED;
+                if (priv->running != running) {
+                        priv->running = running;
+                        if (running)
+                                sfp_upstream_start(priv->sfp_bus);
+                        else
+                                sfp_upstream_stop(priv->sfp_bus);
+                }
+        }
 }
 
 /**
@@ -851,6 +948,7 @@ static struct phy_driver at803x_driver[] = {
 	.get_sset_count		= at803x_phy_get_sset_count,
 	.get_strings		= at803x_phy_get_strings,
 	.get_stats		= at803x_phy_get_stats,
+	.link_change_notify     = at8031_link_change_notify,
 } };
 
 module_phy_driver(at803x_driver);
