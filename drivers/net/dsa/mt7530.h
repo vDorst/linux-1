@@ -444,6 +444,7 @@ static const char *p5_intf_modes(unsigned int p5_interface)
  *			registers
  * @p6_interface	Holding the current port 6 interface
  * @p5_intf_sel:	Holding the current port 5 interface select
+ * @ephy_node:		External phy of_node
  */
 struct mt7530_priv {
 	struct device		*dev;
@@ -458,6 +459,7 @@ struct mt7530_priv {
 	bool			mcm;
 	phy_interface_t		p6_interface;
 	unsigned int		p5_intf_sel;
+	struct device_node	*ephy_node;
 
 	struct mt7530_port	ports[MT7530_NUM_PORTS];
 	/* protect among processes for registers access*/
