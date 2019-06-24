@@ -633,6 +633,23 @@ mt7530_get_sset_count(struct dsa_switch *ds, int port, int sset)
 	return ARRAY_SIZE(mt7530_mib);
 }
 
+static int mt7530_isolate_ephy(struct dsa_switch *ds,
+			       struct device_node *ephy_node)
+{
+	struct phy_device *phydev = of_phy_find_device(ephy_node);
+	int ret;
+
+	if (!phydev)
+		return 0;
+
+	ret = phy_modify(phydev, MII_BMCR, 0, (BMCR_ISOLATE | BMCR_PDOWN));
+	if (ret)
+		dev_err(ds->dev, "Failed to put phy %s in isolation mode!\n",
+			ephy_node->full_name);
+
+	return ret;
+}
+
 static void mt7530_setup_port5(struct dsa_switch *ds, phy_interface_t interface)
 {
 	struct mt7530_priv *priv = ds->priv;
@@ -655,6 +672,10 @@ static void mt7530_setup_port5(struct dsa_switch *ds, phy_interface_t interface)
 		/* MT7530_P5_MODE_GPHY_P4: 2nd GMAC -> P5 -> P4 */
 		val &= ~MHWTRAP_P5_MAC_SEL & ~MHWTRAP_P5_DIS;
 
+		/* Isolate the external phy */
+		if (priv->ephy_node)
+			if (mt7530_isolate_ephy(ds, priv->ephy_node) < 0)
+				goto unlock_exit;
 		/* Setup the MAC by default for the cpu port */
 		mt7530_write(priv, MT7530_PMCR_P(5), 0x56300);
 		break;
@@ -1325,6 +1346,10 @@ mt7530_setup(struct dsa_switch *ds)
 		else
 			mt7530_port_disable(ds, i);
 	}
+
+	/* Get external phy phandle */
+	priv->ephy_node = of_parse_phandle(priv->dev->of_node,
+					   "mediatek,ephy-handle", 0);
 
 	/* Setup port 5 */
 	priv->p5_intf_sel = P5_DISABLED;
