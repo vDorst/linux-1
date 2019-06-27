@@ -195,7 +195,8 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 					   phylink_config);
 	struct mtk_eth *eth = mac->hw;
 
-	u32 ge_mode = 0, val, mcr_cur, mcr_new;
+	u32 ge_mode = 0, val, mcr_cur, mcr_new, err = -EINVAL;
+	u32 sid;
 
 	if (mac->interface != state->interface) {
 		/* Setup soc pin functions */
@@ -206,12 +207,54 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 			if (!MTK_HAS_CAPS(mac->hw->soc->caps,
 					  MTK_GMAC1_TRGMII))
 				goto err_phy;
-			break;
 		case PHY_INTERFACE_MODE_RGMII_TXID:
 		case PHY_INTERFACE_MODE_RGMII_RXID:
 		case PHY_INTERFACE_MODE_RGMII_ID:
 		case PHY_INTERFACE_MODE_RGMII:
+		case PHY_INTERFACE_MODE_MII:
+		case PHY_INTERFACE_MODE_REVMII:
+		case PHY_INTERFACE_MODE_RMII:
+			if (MTK_HAS_CAPS(eth->soc->caps, MTK_RGMII)) {
+				err = mtk_gmac_rgmii_path_setup(eth, mac->id);
+				if (err)
+					goto init_err;
+			}
 			break;
+		case PHY_INTERFACE_MODE_SGMII:
+			if (MTK_HAS_CAPS(eth->soc->caps, MTK_SGMII)) {
+				err = mtk_gmac_sgmii_path_setup(eth, mac->id);
+				if (err)
+					goto init_err;
+			}
+			break;
+		case PHY_INTERFACE_MODE_GMII:
+			if (MTK_HAS_CAPS(eth->soc->caps, MTK_GEPHY)) {
+				err = mtk_gmac_gephy_path_setup(eth, mac->id);
+				if (err)
+					goto init_err;
+			}
+			break;
+		default:
+			goto err_phy;
+		}
+
+		/* Setup clock for 1st gmac */
+		if (!mac->id && state->interface != PHY_INTERFACE_MODE_SGMII &&
+		    MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII)) {
+			if (MTK_HAS_CAPS(mac->hw->soc->caps,
+					 MTK_TRGMII_MT7621_CLK)) {
+				if (mt7621_gmac0_rgmii_adjust(mac->hw,
+							      state->interface))
+					goto err_phy;
+			} else {
+				if (state->interface != 
+				    PHY_INTERFACE_MODE_TRGMII)
+					mtk_gmac0_rgmii_adjust(mac->hw,
+							       state->speed);
+			}
+		}
+
+		switch (state->interface) {
 		case PHY_INTERFACE_MODE_MII:
 			ge_mode = 1;
 			break;
@@ -224,22 +267,7 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 			ge_mode = 3;
 			break;
 		default:
-			goto err_phy;
-		}
-
-		/* Setup clock for 1st gmac */
-		if (!mac->id &&
-		    MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII)) {
-			if (MTK_HAS_CAPS(mac->hw->soc->caps,
-					 MTK_TRGMII_MT7621_CLK)) {
-				if (mt7621_gmac0_rgmii_adjust(mac->hw,
-							      state->interface))
-					goto err_phy;
-			} else {
-				if (state->interface != PHY_INTERFACE_MODE_TRGMII)
-					mtk_gmac0_rgmii_adjust(mac->hw,
-							       state->speed);
-			}
+			break;
 		}
 
 		/* put the gmac into the right mode */
@@ -256,7 +284,43 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		usleep_range(5000, 6000);
 	}
 
-	/* Setup gmac */
+	/* SGMII MAC */
+	if (state->interface == PHY_INTERFACE_MODE_SGMII) {
+
+		/* The path GMAC to SGMII will be enabled once the SGMIISYS is 
+		 * being setup done.
+		 */
+		regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
+
+		regmap_update_bits(eth->ethsys, ETHSYS_SYSCFG0,
+				   SYSCFG0_SGMII_MASK,
+				   ~(u32)SYSCFG0_SGMII_MASK);
+
+		/* Decide how GMAC and SGMIISYS be mapped */
+		sid = (MTK_HAS_CAPS(eth->soc->caps, MTK_SHARED_SGMII)) ?
+		       0 : mac->id;
+
+		/* Setup SGMIISYS with the determined property */
+		if (phylink_autoneg_inband(mode))
+			err = mtk_sgmii_setup_mode_an(eth->sgmii, sid);
+		else
+			err = mtk_sgmii_setup_mode_force(eth->sgmii, sid,
+							 state->speed);
+		if (err)
+			goto init_err;
+
+		regmap_update_bits(eth->ethsys, ETHSYS_SYSCFG0,
+				   SYSCFG0_SGMII_MASK, val);
+
+		return;
+	}
+
+	if (phylink_autoneg_inband(mode)) {
+		dev_err(eth->dev, "In-band mode not supported in xMII mode!\n");
+		return;
+	}
+
+	/* Setup xMII MAC */
 	mcr_cur = mtk_r32(mac->hw, MTK_MAC_MCR(mac->id));
 	mcr_new = mcr_cur;
 	mcr_new &= ~(MAC_MCR_SPEED_1000 | MAC_MCR_SPEED_100 |
@@ -291,6 +355,10 @@ err_phy:
 	dev_err(eth->dev, "%s: GMAC%d mode %s not supported!\n", __func__,
 		mac->id, phy_modes(state->interface));
 	return;
+
+init_err:
+	dev_err(eth->dev, "%s: GMAC%d mode %s err: %d!\n", __func__,
+		mac->id, phy_modes(state->interface), err);
 }
 
 static int mtk_mac_link_state(struct phylink_config *config,
