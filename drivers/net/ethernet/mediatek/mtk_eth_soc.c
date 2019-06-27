@@ -285,7 +285,6 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 	if (mcr_new != mcr_cur)
 		mtk_w32(mac->hw, mcr_new, MTK_MAC_MCR(mac->id));
 
-	dev_info(eth->dev, "MAC_CONFIG: GM%d, MCR:%x, NEW:%x PHY:%s\n", mac->id, mcr_cur, mcr_new, phy_modes(state->interface));
 	return;
 
 err_phy:
@@ -340,15 +339,11 @@ static void mtk_mac_link_down(struct phylink_config *config, unsigned int mode,
 {
 	struct mtk_mac *mac = container_of(config, struct mtk_mac,
 					   phylink_config);
-	u32 mcr;
 
 	if (mode == MLO_AN_INBAND)
 		return;
 
 	mtk_w32(mac->hw, 0x8000, MTK_MAC_MCR(mac->id));
-
-	mcr = mtk_r32(mac->hw, MTK_MAC_MCR(mac->id));
-	dev_info(mac->hw->dev, "LINK_DOWN: GM%d, MCR:%x\n", mac->id, mcr);
 }
 
 static void mtk_mac_link_up(struct phylink_config *config, unsigned int mode,
@@ -365,8 +360,6 @@ static void mtk_mac_link_up(struct phylink_config *config, unsigned int mode,
 	mcr = mtk_r32(mac->hw, MTK_MAC_MCR(mac->id));
 	mcr |= MAC_MCR_TX_EN | MAC_MCR_RX_EN;
 	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
-
-	dev_info(mac->hw->dev, "LINK_UP: GM%d, MCR:%x\n", mac->id, mcr);
 }
 
 static void mtk_validate(struct phylink_config *config,
@@ -408,8 +401,6 @@ static void mtk_validate(struct phylink_config *config,
 
 	linkmode_and(supported, supported, mask);
 	linkmode_and(state->advertising, state->advertising, mask);
-
-	dev_info(mac->hw->dev, "VALIDATE: GM%d PHY:%s\n", mac->id,  phy_modes(state->interface));
 }
 
 static const struct phylink_mac_ops mtk_phylink_ops = {
