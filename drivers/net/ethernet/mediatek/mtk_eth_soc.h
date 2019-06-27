@@ -853,7 +853,10 @@ u32 mtk_r32(struct mtk_eth *eth, unsigned reg);
 int mtk_sgmii_init(struct mtk_sgmii *ss, struct device_node *np,
 		   u32 ana_rgc3);
 int mtk_sgmii_setup_mode_an(struct mtk_sgmii *ss, int id);
-int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id);
-int mtk_setup_hw_path(struct mtk_eth *eth, int mac_id, int phymode);
+int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id, int speed);
+
+int mtk_gmac_sgmii_path_setup(struct mtk_eth *eth, int mac_id);
+int mtk_gmac_gephy_path_setup(struct mtk_eth *eth, int mac_id);
+int mtk_gmac_rgmii_path_setup(struct mtk_eth *eth, int mac_id);
 
 #endif /* MTK_ETH_H */
