@@ -65,6 +65,17 @@ u32 mtk_r32(struct mtk_eth *eth, unsigned reg)
 	return __raw_readl(eth->base + reg);
 }
 
+u32 mtk_m32(struct mtk_eth *eth, u32 mask, u32 set, unsigned reg)
+{
+	u32 val;
+
+	val = mtk_r32(eth, reg);
+	val &= ~mask;
+	val |= set;
+	mtk_w32(eth, val, reg);
+	return reg;
+}
+
 static int mtk_mdio_busy_wait(struct mtk_eth *eth)
 {
 	unsigned long t_start = jiffies;
@@ -160,10 +171,20 @@ static int mt7621_gmac0_rgmii_adjust(struct mtk_eth *eth,
 	return 0;
 }
 
-static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth, int speed)
+static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth,
+				   phy_interface_t interface, int speed)
 {
 	u32 val;
 	int ret;
+
+	if (interface == PHY_INTERFACE_MODE_TRGMII) {
+		mtk_w32(eth, TRGMII_MODE, INTF_MODE);
+		val = 500000000;
+		ret = clk_set_rate(eth->clks[MTK_CLK_TRGPLL], val);
+		if (ret)
+			dev_err(eth->dev, "Failed to set trgmii pll: %d\n", ret);
+		return;
+	}
 
 	val = (speed == SPEED_1000) ?
 		INTF_MODE_RGMII_1000 : INTF_MODE_RGMII_10_100;
@@ -196,7 +217,7 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 	struct mtk_eth *eth = mac->hw;
 
 	u32 ge_mode = 0, val, mcr_cur, mcr_new, err = -EINVAL;
-	u32 sid;
+	u32 sid, i;
 
 	if (mac->interface != state->interface) {
 		/* Setup soc pin functions */
@@ -247,10 +268,20 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 							      state->interface))
 					goto err_phy;
 			} else {
-				if (state->interface != 
-				    PHY_INTERFACE_MODE_TRGMII)
-					mtk_gmac0_rgmii_adjust(mac->hw,
-							       state->speed);
+				mtk_gmac0_rgmii_adjust(mac->hw,
+						       state->interface,
+						       state->speed);
+
+				/* mt7623_pad_clk_setup */
+				for (i = 0 ; i < NUM_TRGMII_CTRL; i++)
+					mtk_w32(mac->hw,
+						TD_DM_DRVP(8) | TD_DM_DRVN(8),
+						TRGMII_TD_ODT(i));
+
+				/* Assert/release MT7623 RXC reset */
+				mtk_m32(mac->hw, 0, RXC_RST | RXC_DQSISEL,
+					TRGMII_RCK_CTRL);
+				mtk_m32(mac->hw, RXC_RST, 0, TRGMII_RCK_CTRL);
 			}
 		}
 
@@ -277,11 +308,6 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		regmap_write(eth->ethsys, ETHSYS_SYSCFG0, val);
 
 		mac->interface = state->interface;
-
-		/* This delay seems to be needed to bring up the MAC right.
-		 * Without this delay the MAC doesn't come up on a MT7623N SOC.
-		 */
-		usleep_range(5000, 6000);
 	}
 
 	/* SGMII MAC */
