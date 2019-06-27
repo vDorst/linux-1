@@ -194,7 +194,8 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 					   phylink_config);
 	struct mtk_eth *eth = mac->hw;
 
-	u32 ge_mode = 0, val, mcr_cur, mcr_new;
+	u32 ge_mode = 0, val, mcr_cur, mcr_new, err = -EINVAL;
+	u32 sid;
 
 	if (mac->interface != state->interface) {
 		/* Setup soc pin functions */
@@ -210,24 +211,38 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		case PHY_INTERFACE_MODE_RGMII_RXID:
 		case PHY_INTERFACE_MODE_RGMII_ID:
 		case PHY_INTERFACE_MODE_RGMII:
-			break;
 		case PHY_INTERFACE_MODE_MII:
-			ge_mode = 1;
-			break;
 		case PHY_INTERFACE_MODE_REVMII:
-			ge_mode = 2;
-			break;
 		case PHY_INTERFACE_MODE_RMII:
-			if (mac->id)
-				goto err_phy;
-			ge_mode = 3;
+			if (MTK_HAS_CAPS(eth->soc->caps, MTK_RGMII)) {
+				err = mtk_gmac_rgmii_path_setup(eth, mac->id);
+				if (err)
+					goto init_err;
+			}
+			break;
+		case PHY_INTERFACE_MODE_1000BASEX:
+		case PHY_INTERFACE_MODE_2500BASEX:
+		case PHY_INTERFACE_MODE_SGMII:
+			if (MTK_HAS_CAPS(eth->soc->caps, MTK_SGMII)) {
+				err = mtk_gmac_sgmii_path_setup(eth, mac->id);
+				if (err)
+					goto init_err;
+			}
+			break;
+		case PHY_INTERFACE_MODE_GMII:
+			if (MTK_HAS_CAPS(eth->soc->caps, MTK_GEPHY)) {
+				err = mtk_gmac_gephy_path_setup(eth, mac->id);
+				if (err)
+					goto init_err;
+			}
 			break;
 		default:
 			goto err_phy;
 		}
 
 		/* Setup clock for 1st gmac */
-		if (!mac->id &&
+		if (!mac->id && state->interface != PHY_INTERFACE_MODE_SGMII &&
+		    !phy_interface_mode_is_8023z(state->interface) &&
 		    MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII)) {
 			if (MTK_HAS_CAPS(mac->hw->soc->caps,
 					 MTK_TRGMII_MT7621_CLK)) {
@@ -242,6 +257,22 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 			}
 		}
 
+		switch (state->interface) {
+		case PHY_INTERFACE_MODE_MII:
+			ge_mode = 1;
+			break;
+		case PHY_INTERFACE_MODE_REVMII:
+			ge_mode = 2;
+			break;
+		case PHY_INTERFACE_MODE_RMII:
+			if (mac->id)
+				goto err_phy;
+			ge_mode = 3;
+			break;
+		default:
+			break;
+		}
+
 		/* put the gmac into the right mode */
 		regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
 		val &= ~SYSCFG0_GE_MODE(SYSCFG0_GE_MASK, mac->id);
@@ -251,7 +282,41 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		mac->interface = state->interface;
 	}
 
-	/* Setup gmac */
+	/* SGMII */
+	if (state->interface == PHY_INTERFACE_MODE_SGMII ||
+	    phy_interface_mode_is_8023z(state->interface)) {
+		/* The path GMAC to SGMII will be enabled once the SGMIISYS is
+		 * being setup done.
+		 */
+		regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
+
+		regmap_update_bits(eth->ethsys, ETHSYS_SYSCFG0,
+				   SYSCFG0_SGMII_MASK,
+				   ~(u32)SYSCFG0_SGMII_MASK);
+
+		/* Decide how GMAC and SGMIISYS be mapped */
+		sid = (MTK_HAS_CAPS(eth->soc->caps, MTK_SHARED_SGMII)) ?
+		       0 : mac->id;
+
+		/* Setup SGMIISYS with the determined property */
+		if (state->interface != PHY_INTERFACE_MODE_SGMII)
+			err = mtk_sgmii_setup_mode_force(eth->sgmii, sid,
+							 state);
+		else if (phylink_autoneg_inband(mode))
+			err = mtk_sgmii_setup_mode_an(eth->sgmii, sid);
+
+		if (err)
+			goto init_err;
+
+		regmap_update_bits(eth->ethsys, ETHSYS_SYSCFG0,
+				   SYSCFG0_SGMII_MASK, val);
+	} else if (phylink_autoneg_inband(mode)) {
+		dev_err(eth->dev,
+			"In-band mode not supported in non SGMII mode!\n");
+		return;
+	}
+
+	/* Setup GMAC */
 	mcr_cur = mtk_r32(mac->hw, MTK_MAC_MCR(mac->id));
 	mcr_new = mcr_cur;
 	mcr_new &= ~(MAC_MCR_SPEED_100 | MAC_MCR_SPEED_1000 |
@@ -261,6 +326,7 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		   MAC_MCR_BACKOFF_EN | MAC_MCR_BACKPR_EN | MAC_MCR_FORCE_LINK;
 
 	switch (state->speed) {
+	case SPEED_2500:
 	case SPEED_1000:
 		mcr_new |= MAC_MCR_SPEED_1000;
 		break;
@@ -285,6 +351,11 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 err_phy:
 	dev_err(eth->dev, "%s: GMAC%d mode %s not supported!\n", __func__,
 		mac->id, phy_modes(state->interface));
+	return;
+
+init_err:
+	dev_err(eth->dev, "%s: GMAC%d mode %s err: %d!\n", __func__,
+		mac->id, phy_modes(state->interface), err);
 }
 
 static int mtk_mac_link_state(struct phylink_config *config,
@@ -325,7 +396,10 @@ static int mtk_mac_link_state(struct phylink_config *config,
 
 static void mtk_mac_an_restart(struct phylink_config *config)
 {
-	/* Do nothing */
+	struct mtk_mac *mac = container_of(config, struct mtk_mac,
+					   phylink_config);
+
+	mtk_sgmii_restart_an(mac->hw, mac->id);
 }
 
 static void mtk_mac_link_down(struct phylink_config *config, unsigned int mode,
@@ -362,7 +436,10 @@ static void mtk_validate(struct phylink_config *config,
 	    state->interface != PHY_INTERFACE_MODE_MII &&
 	    !(!mac->id && state->interface == PHY_INTERFACE_MODE_TRGMII &&
 	      MTK_HAS_CAPS(mac->hw->soc->caps, MTK_TRGMII)) &&
-	    !phy_interface_mode_is_rgmii(state->interface)) {
+	    !phy_interface_mode_is_rgmii(state->interface) &&
+	    !(MTK_HAS_CAPS(mac->hw->soc->caps, MTK_SGMII) &&
+	      (state->interface == PHY_INTERFACE_MODE_SGMII ||
+	       phy_interface_mode_is_8023z(state->interface)))) {
 		linkmode_zero(supported);
 		return;
 	}
@@ -370,18 +447,28 @@ static void mtk_validate(struct phylink_config *config,
 	phylink_set_port_modes(mask);
 	phylink_set(mask, Autoneg);
 
-	if (state->interface == PHY_INTERFACE_MODE_TRGMII) {
-		phylink_set(mask, 1000baseT_Full);
-	} else {
-		phylink_set(mask, 10baseT_Half);
-		phylink_set(mask, 10baseT_Full);
-		phylink_set(mask, 100baseT_Half);
-		phylink_set(mask, 100baseT_Full);
-
-		if (state->interface != PHY_INTERFACE_MODE_MII) {
-			phylink_set(mask, 1000baseT_Half);
+	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_SGMII)) {
+		if (state->interface != PHY_INTERFACE_MODE_2500BASEX) {
 			phylink_set(mask, 1000baseT_Full);
 			phylink_set(mask, 1000baseX_Full);
+		} else {
+			phylink_set(mask, 2500baseT_Full);
+			phylink_set(mask, 2500baseX_Full);
+		}
+	} else {
+		if (state->interface == PHY_INTERFACE_MODE_TRGMII) {
+			phylink_set(mask, 1000baseT_Full);
+		} else {
+			phylink_set(mask, 10baseT_Half);
+			phylink_set(mask, 10baseT_Full);
+			phylink_set(mask, 100baseT_Half);
+			phylink_set(mask, 100baseT_Full);
+
+			if (state->interface != PHY_INTERFACE_MODE_MII) {
+				phylink_set(mask, 1000baseT_Half);
+				phylink_set(mask, 1000baseT_Full);
+				phylink_set(mask, 1000baseX_Full);
+			}
 		}
 	}
 
@@ -390,6 +477,11 @@ static void mtk_validate(struct phylink_config *config,
 
 	linkmode_and(supported, supported, mask);
 	linkmode_and(state->advertising, state->advertising, mask);
+
+	/* We can only operate at 2500BaseX or 1000BaseX. If requested
+	 * to advertise both, only report advertising at 2500BaseX.
+	 */
+	phylink_helper_basex_speed(state);
 }
 
 static const struct phylink_mac_ops mtk_phylink_ops = {
