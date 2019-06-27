@@ -267,7 +267,6 @@ enum mt7530_vlan_port_attr {
 
 /* Registers for TRGMII on the both side */
 #define MT7530_TRGMII_RCK_CTRL		0x7a00
-#define GSW_TRGMII_RCK_CTRL		0x300
 #define  RX_RST				BIT(31)
 #define  RXC_DQSISEL			BIT(30)
 #define  DQSI1_TAP_MASK			(0x7f << 8)
@@ -276,30 +275,23 @@ enum mt7530_vlan_port_attr {
 #define  DQSI0_TAP(x)			((x) & 0x7f)
 
 #define MT7530_TRGMII_RCK_RTT		0x7a04
-#define GSW_TRGMII_RCK_RTT		0x304
 #define  DQS1_GATE			BIT(31)
 #define  DQS0_GATE			BIT(30)
 
 #define MT7530_TRGMII_RD(x)		(0x7a10 + (x) * 8)
-#define GSW_TRGMII_RD(x)		(0x310 + (x) * 8)
 #define  BSLIP_EN			BIT(31)
 #define  EDGE_CHK			BIT(30)
 #define  RD_TAP_MASK			0x7f
 #define  RD_TAP(x)			((x) & 0x7f)
 
-#define GSW_TRGMII_TXCTRL		0x340
 #define MT7530_TRGMII_TXCTRL		0x7a40
 #define  TRAIN_TXEN			BIT(31)
 #define  TXC_INV			BIT(30)
 #define  TX_RST				BIT(28)
 
 #define MT7530_TRGMII_TD_ODT(i)		(0x7a54 + 8 * (i))
-#define GSW_TRGMII_TD_ODT(i)		(0x354 + 8 * (i))
 #define  TD_DM_DRVP(x)			((x) & 0xf)
 #define  TD_DM_DRVN(x)			(((x) & 0xf) << 4)
-
-#define GSW_INTF_MODE			0x390
-#define  INTF_MODE_TRGMII		BIT(1)
 
 #define MT7530_TRGMII_TCK_CTRL		0x7a78
 #define  TCK_TAP(x)			(((x) & 0xf) << 8)
