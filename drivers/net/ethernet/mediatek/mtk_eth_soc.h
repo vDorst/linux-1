@@ -626,7 +626,7 @@ enum mtk_eth_path {
 #define MTK_TRGMII_MT7621_CLK		BIT(10)
 
 /* Supported path present on SoCs */
-#define MTK_PATH_BIT(x)         BIT((x) + 10)
+#define MTK_PATH_BIT(x)         BIT((x) + 11)
 
 #define MTK_GMAC1_RGMII \
 	(MTK_PATH_BIT(MTK_ETH_PATH_GMAC1_RGMII) | MTK_RGMII)
