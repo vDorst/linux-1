@@ -16,8 +16,7 @@
 int mtk_sgmii_init(struct mtk_sgmii *ss, struct device_node *r, u32 ana_rgc3)
 {
 	struct device_node *np;
-	const char *str;
-	int i, err;
+	int i;
 
 	ss->ana_rgc3 = ana_rgc3;
 
@@ -29,19 +28,6 @@ int mtk_sgmii_init(struct mtk_sgmii *ss, struct device_node *r, u32 ana_rgc3)
 		ss->regmap[i] = syscon_node_to_regmap(np);
 		if (IS_ERR(ss->regmap[i]))
 			return PTR_ERR(ss->regmap[i]);
-
-		err = of_property_read_string(np, "mediatek,physpeed", &str);
-		if (err)
-			return err;
-
-		if (!strcmp(str, "2500"))
-			ss->flags[i] |= MTK_SGMII_PHYSPEED_2500;
-		else if (!strcmp(str, "1000"))
-			ss->flags[i] |= MTK_SGMII_PHYSPEED_1000;
-		else if (!strcmp(str, "auto"))
-			ss->flags[i] |= MTK_SGMII_PHYSPEED_AN;
-		else
-			return -EINVAL;
 	}
 
 	return 0;
@@ -73,18 +59,17 @@ int mtk_sgmii_setup_mode_an(struct mtk_sgmii *ss, int id)
 	return 0;
 }
 
-int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id)
+int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id, int speed)
 {
 	unsigned int val;
-	int mode;
 
 	if (!ss->regmap[id])
 		return -EINVAL;
 
 	regmap_read(ss->regmap[id], ss->ana_rgc3, &val);
 	val &= ~GENMASK(2, 3);
-	mode = ss->flags[id] & MTK_SGMII_PHYSPEED_MASK;
-	val |= (mode == MTK_SGMII_PHYSPEED_1000) ? 0 : BIT(2);
+	if (speed == SPEED_2500)
+		val |= BIT(2);
 	regmap_write(ss->regmap[id], ss->ana_rgc3, val);
 
 	/* Disable SGMII AN */
