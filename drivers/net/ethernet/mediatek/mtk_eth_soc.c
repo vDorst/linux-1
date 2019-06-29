@@ -442,7 +442,10 @@ static void mtk_validate(struct phylink_config *config,
 	    state->interface != PHY_INTERFACE_MODE_MII &&
 	    !(!mac->id && state->interface == PHY_INTERFACE_MODE_TRGMII &&
 	      MTK_HAS_CAPS(mac->hw->soc->caps, MTK_TRGMII)) &&
-	    !phy_interface_mode_is_rgmii(state->interface)) {
+	    !phy_interface_mode_is_rgmii(state->interface) &&
+	    !(MTK_HAS_CAPS(mac->hw->soc->caps, MTK_SGMII) &&
+	      (state->interface == PHY_INTERFACE_MODE_SGMII ||
+	       phy_interface_mode_is_8023z(state->interface)))) {
 		linkmode_zero(supported);
 		return;
 	}
@@ -450,17 +453,27 @@ static void mtk_validate(struct phylink_config *config,
 	phylink_set_port_modes(mask);
 	phylink_set(mask, Autoneg);
 
-	if (state->interface == PHY_INTERFACE_MODE_TRGMII) {
-		phylink_set(mask, 1000baseT_Full);
-	} else {
-		phylink_set(mask, 10baseT_Half);
-		phylink_set(mask, 10baseT_Full);
-		phylink_set(mask, 100baseT_Half);
-		phylink_set(mask, 100baseT_Full);
-
-		if (state->interface != PHY_INTERFACE_MODE_MII) {
-			phylink_set(mask, 1000baseT_Half);
+	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_SGMII)) {
+		if (state->interface != PHY_INTERFACE_MODE_2500BASEX) {
 			phylink_set(mask, 1000baseT_Full);
+			phylink_set(mask, 1000baseX_Full);
+		} else {
+			phylink_set(mask, 2500baseT_Full);
+			phylink_set(mask, 2500baseX_Full);
+		}
+	} else {
+		if (state->interface == PHY_INTERFACE_MODE_TRGMII) {
+			phylink_set(mask, 1000baseT_Full);
+		} else {
+			phylink_set(mask, 10baseT_Half);
+			phylink_set(mask, 10baseT_Full);
+			phylink_set(mask, 100baseT_Half);
+			phylink_set(mask, 100baseT_Full);
+
+			if (state->interface != PHY_INTERFACE_MODE_MII) {
+				phylink_set(mask, 1000baseT_Half);
+				phylink_set(mask, 1000baseT_Full);
+			}
 		}
 	}
 
@@ -469,6 +482,11 @@ static void mtk_validate(struct phylink_config *config,
 
 	linkmode_and(supported, supported, mask);
 	linkmode_and(state->advertising, state->advertising, mask);
+
+	/* We can only operate at 2500BaseX or 1000BaseX.  If requested
+	 * to advertise both, only report advertising at 2500BaseX.
+	 */
+	phylink_helper_basex_speed(state);
 }
 
 static const struct phylink_mac_ops mtk_phylink_ops = {
