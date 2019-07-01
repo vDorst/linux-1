@@ -13,13 +13,9 @@
 #include "mtk_eth_soc.h"
 
 struct mtk_eth_muxc {
-	int (*set_path)(struct mtk_eth *eth, int path);
-};
-
-static const char * const mtk_eth_mux_name[] = {
-	"mux_gdm1_to_gmac1_esw", "mux_gmac2_gmac0_to_gephy",
-	"mux_u3_gmac2_to_qphy", "mux_gmac1_gmac2_to_sgmii_rgmii",
-	"mux_gmac12_to_gephy_sgmii",
+	const char	*name;
+	int		cap_bit;
+	int		(*set_path)(struct mtk_eth *eth, int path);
 };
 
 static const char * mtk_eth_path_name(int path)
@@ -191,11 +187,27 @@ static int set_mux_gmac12_to_gephy_sgmii(struct mtk_eth *eth, int path)
 }
 
 static const struct mtk_eth_muxc mtk_eth_muxc[] = {
-	{ .set_path = set_mux_gdm1_to_gmac1_esw, },
-	{ .set_path = set_mux_gmac2_gmac0_to_gephy, },
-	{ .set_path = set_mux_u3_gmac2_to_qphy, },
-	{ .set_path = set_mux_gmac1_gmac2_to_sgmii_rgmii, },
-	{ .set_path = set_mux_gmac12_to_gephy_sgmii, }
+	{
+		.name = "mux_gdm1_to_gmac1_esw",
+		.cap_bit = MTK_ETH_MUX_GDM1_TO_GMAC1_ESW,
+		.set_path = set_mux_gdm1_to_gmac1_esw,
+	}, {
+		.name = "mux_gmac2_gmac0_to_gephy",
+		.cap_bit = MTK_ETH_MUX_GMAC2_GMAC0_TO_GEPHY,
+		.set_path = set_mux_gmac2_gmac0_to_gephy,
+	}, {
+		.name = "mux_u3_gmac2_to_qphy",
+		.cap_bit = MTK_ETH_MUX_U3_GMAC2_TO_QPHY,
+		.set_path = set_mux_u3_gmac2_to_qphy,
+	}, {
+		.name = "mux_gmac1_gmac2_to_sgmii_rgmii",
+		.cap_bit = MTK_ETH_MUX_GMAC1_GMAC2_TO_SGMII_RGMII,
+		.set_path = set_mux_gmac1_gmac2_to_sgmii_rgmii,
+	}, {
+		.name = "mux_gmac12_to_gephy_sgmii",
+		.cap_bit = MTK_ETH_MUX_GMAC12_TO_GEPHY_SGMII,
+		.set_path = set_mux_gmac12_to_gephy_sgmii,
+	},
 };
 
 static int mtk_eth_mux_setup(struct mtk_eth *eth, int path)
@@ -212,14 +224,14 @@ static int mtk_eth_mux_setup(struct mtk_eth *eth, int path)
 		return 0;
 
 	/* Setup MUX in path fabric */
-	for (i = 0; i < MTK_ETH_MUX_MAX; i++) {
-		if (MTK_HAS_CAPS(eth->soc->caps, MTK_MUX_BIT(i))) {
+	for (i = 0; i < ARRAY_SIZE(mtk_eth_muxc); i++) {
+		if (MTK_HAS_CAPS(eth->soc->caps, mtk_eth_muxc[i].cap_bit)) {
 			err = mtk_eth_muxc[i].set_path(eth, path);
 			if (err)
 				goto out;
 		} else {
 			dev_dbg(eth->dev, "mux %s isn't present on the SoC\n",
-				mtk_eth_mux_name[i]);
+				mtk_eth_muxc[i].name);
 		}
 	}
 
