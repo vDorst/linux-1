@@ -22,10 +22,27 @@ static const char * const mtk_eth_mux_name[] = {
 	"mux_gmac12_to_gephy_sgmii",
 };
 
-static const char * const mtk_eth_path_name[] = {
-	"gmac1_rgmii", "gmac1_trgmii", "gmac1_sgmii", "gmac2_rgmii",
-	"gmac2_sgmii", "gmac2_gephy", "gdm1_esw",
-};
+static const char * mtk_eth_path_name(int path)
+{
+	switch (path) {
+	case MTK_ETH_PATH_GMAC1_RGMII:
+		return "gmac1_rgmii";
+	case MTK_ETH_PATH_GMAC1_TRGMII:
+		return "gmac1_trgmii";
+	case MTK_ETH_PATH_GMAC1_SGMII:
+		return "gmac1_sgmii";
+	case MTK_ETH_PATH_GMAC2_RGMII:
+		return "gmac2_rgmii";
+	case MTK_ETH_PATH_GMAC2_SGMII:
+		return "gmac2_sgmii";
+	case MTK_ETH_PATH_GMAC2_GEPHY:
+		return "gmac2_gephy";
+	case MTK_ETH_PATH_GDM1_ESW:
+		return "gdm1_esw";
+	default:
+		return "unknown path";
+	}
+}
 
 static int set_mux_gdm1_to_gmac1_esw(struct mtk_eth *eth, int path)
 {
@@ -53,7 +70,7 @@ static int set_mux_gdm1_to_gmac1_esw(struct mtk_eth *eth, int path)
 	}
 
 	dev_dbg(eth->dev, "path %s in %s updated = %d\n",
-		mtk_eth_path_name[path], __func__, updated);
+		mtk_eth_path_name(path), __func__, updated);
 
 	return 0;
 }
@@ -76,7 +93,7 @@ static int set_mux_gmac2_gmac0_to_gephy(struct mtk_eth *eth, int path)
 		regmap_update_bits(eth->infra, INFRA_MISC2, GEPHY_MAC_SEL, val);
 
 	dev_dbg(eth->dev, "path %s in %s updated = %d\n",
-		mtk_eth_path_name[path], __func__, updated);
+		mtk_eth_path_name(path), __func__, updated);
 
 	return 0;
 }
@@ -99,7 +116,7 @@ static int set_mux_u3_gmac2_to_qphy(struct mtk_eth *eth, int path)
 		regmap_update_bits(eth->infra, INFRA_MISC2, CO_QPHY_SEL, val);
 
 	dev_dbg(eth->dev, "path %s in %s updated = %d\n",
-		mtk_eth_path_name[path], __func__, updated);
+		mtk_eth_path_name(path), __func__, updated);
 
 	return 0;
 }
@@ -137,7 +154,7 @@ static int set_mux_gmac1_gmac2_to_sgmii_rgmii(struct mtk_eth *eth, int path)
 				   SYSCFG0_SGMII_MASK, val);
 
 	dev_dbg(eth->dev, "path %s in %s updated = %d\n",
-		mtk_eth_path_name[path], __func__, updated);
+		mtk_eth_path_name(path), __func__, updated);
 
 	return 0;
 }
@@ -168,7 +185,7 @@ static int set_mux_gmac12_to_gephy_sgmii(struct mtk_eth *eth, int path)
 				   SYSCFG0_SGMII_MASK, val);
 
 	dev_dbg(eth->dev, "path %s in %s updated = %d\n",
-		mtk_eth_path_name[path], __func__, updated);
+		mtk_eth_path_name(path), __func__, updated);
 
 	return 0;
 }
@@ -185,9 +202,9 @@ static int mtk_eth_mux_setup(struct mtk_eth *eth, int path)
 {
 	int i, err = 0;
 
-	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_PATH_BIT(path))) {
+	if (!MTK_HAS_CAPS(eth->soc->caps, path)) {
 		dev_err(eth->dev, "path %s isn't support on the SoC\n",
-			mtk_eth_path_name[path]);
+			mtk_eth_path_name(path));
 		return -EINVAL;
 	}
 
