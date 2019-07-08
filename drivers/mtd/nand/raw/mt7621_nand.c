@@ -1343,7 +1343,7 @@ static int mt7621_nand_attach(struct nand_chip *chip)
 
 	mt7621_nand_set_ecc_mode(mtd);
 
-	if (chip->chipsize < (256*1024*1024))
+	if (nanddev_target_size(&chip->base) < (256*1024*1024))
 		host->addr_cycles = 4;
 
 	/* allocate buffers or call select_chip here or a bit earlier*/
