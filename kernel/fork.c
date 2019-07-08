@@ -248,7 +248,11 @@ static unsigned long *alloc_thread_stack_node(struct task_struct *tsk, int node)
 	struct page *page = alloc_pages_node(node, THREADINFO_GFP,
 					     THREAD_SIZE_ORDER);
 
-	return page ? page_address(page) : NULL;
+	if (likely(page)) {
+		tsk->stack = page_address(page);
+		return tsk->stack;
+	}
+	return NULL;
 #endif
 }
 
@@ -2032,6 +2036,7 @@ static __latent_entropy struct task_struct *copy_process(
 					      O_RDWR | O_CLOEXEC);
 		if (IS_ERR(pidfile)) {
 			put_unused_fd(pidfd);
+			retval = PTR_ERR(pidfile);
 			goto bad_fork_free_pid;
 		}
 		get_pid(pid);	/* held by pidfile now */
