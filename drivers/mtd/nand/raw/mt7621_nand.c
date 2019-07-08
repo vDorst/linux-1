@@ -884,7 +884,8 @@ static void mt7621_nand_set_ecc_mode(struct mtd_info *mtd)
 {
 	struct nand_chip *chip = mtd_to_nand(mtd);
 	//struct mt7621_nand_host *host = nand_get_controller_data(chip);
-	u32 spare_per_sector = mtd->oobsize / (mtd->writesize / 512);
+	// u32 spare_per_sector = mtd->oobsize / (mtd->writesize / 512);
+	u32 spare_per_sector = 28;
 	u32 spare_bit = PAGEFMT_SPARE_16;
 	u32 ecc_bit = 4;
 
