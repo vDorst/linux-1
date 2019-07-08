@@ -71,7 +71,7 @@
 &pinctrl {
 	state_default: pinctrl0 {
 		gpio {
-			groups = "uart2", "uart3", "rgmii2", "jtag";
+			groups = "uart2", "uart3", "jtag";
 			function = "gpio";
 		};
 	};
@@ -126,16 +126,14 @@
 		};
 	};
 
-/*
 	gmac1: mac@1 {
 		compatible = "mediatek,eth-mac";
 		mtd-mac-address = <&factory 0x22>;
 		reg = <1>;
-		label = "eth4";
+		label = "lan5";
 		phy-mode = "rgmii-txid";
 		phy-handle = <&phy4>;
 	};
-*/
 
 	mdio: mdio-bus {
 		#address-cells = <1>;
@@ -186,10 +184,12 @@
 					label = "lan3";
 				};
 
+/*
 				port@4 {
 					reg = <4>;
 					label = "lan4";
 				};
+*/
 
 				cpu_port0: port@6 {
 					reg = <6>;
