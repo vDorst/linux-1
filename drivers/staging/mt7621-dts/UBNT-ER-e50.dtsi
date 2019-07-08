@@ -28,9 +28,9 @@
 
 &nand {
 	status = "okay";
-        pin-ctrl-names = "default";
-        pinctrl-0 = <&nand_pins>;
-        mediatek,nand-bbt-compat;
+	pin-ctrl-names = "default";
+	pinctrl-0 = <&nand_pins>;
+	mediatek,nand-bbt-compat;
 
 	partitions {
 		compatible = "fixed-partitions";
