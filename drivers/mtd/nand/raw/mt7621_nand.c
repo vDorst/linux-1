@@ -1426,7 +1426,7 @@ static int mt7621_nand_probe(struct platform_device *pdev)
 	chip = &host->nand_chip;
 	chip->priv = host;
 
-	mtd = host->mtd = &chip->mtd;
+	mtd = host->mtd = nand_to_mtd(chip);
 	mtd->priv = chip;
 	mtd->owner = THIS_MODULE;
 	mtd->name = "MT7621-NAND";
