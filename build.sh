@@ -82,6 +82,17 @@ function pack {
 	cd $olddir
 }
 
+function getuenvpath {
+	uenv=/media/${USER}/BPI-BOOT/bananapi/bpi-r64/linux/uEnv.txt
+	if [[ ! -e $uenv ]];then
+		uenv=/media/${USER}/BPI-BOOT/uEnv.txt
+		if [[ ! -e $uenv ]];then
+			uenv="";
+		fi
+	fi
+	echo $uenv;
+}
+
 function upload {
 	imagename="uImage_${kernver}${gitbranch}"
 	read -e -i $imagename -p "uImage-filename: " input
@@ -125,9 +136,12 @@ function install {
 			echo "actual Kernel not found...is /boot mounted?"
 		fi
 	else
-		echo "by default this kernel/dtb-file will be loaded (uEnv.txt):"
-		grep '^kernel=' /media/${USER}/BPI-BOOT/bananapi/bpi-r64/linux/uEnv.txt|tail -1
-		grep '^fdt=' /media/${USER}/BPI-BOOT/bananapi/bpi-r64/linux/uEnv.txt|tail -1
+		uenv=$(getuenvpath)
+		if [[ -n "$uenv" ]];then
+			echo "by default this kernel/dtb-file will be loaded (uEnv.txt):"
+			grep '^kernel=' $uenv|tail -1
+			grep '^fdt=' $uenv|tail -1
+		fi
 		read -p "Press [enter] to copy data to SD-Card..."
 		if  [[ -d /media/$USER/BPI-BOOT ]]; then
 			kernelfile=/media/$USER/BPI-BOOT/bananapi/bpi-r64/linux/$imagename
@@ -411,7 +425,12 @@ if [ -n "$kernver" ]; then
 
  		"uenv")
 			echo "edit uEnv.txt on sd-card"
-			nano /media/$USER/BPI-BOOT/bananapi/bpi-r64/linux/uEnv.txt
+			uenv=$(getuenvpath)
+			if [[ -n "$uenv" ]];then
+				nano $uenv
+			else
+				echo "uenv.txt not found"
+			fi
 			;;
 
 		"defconfig")
