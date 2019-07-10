@@ -100,7 +100,14 @@ function upload {
 
 	echo "Name: $imagename"
 
+	dtbname="${kernver}${gitbranch}.dtb"
+	read -e -i $dtbname -p "dtb-filename: " input
+	dtbname="${input:-$dtbname}"
+
+	echo "Name: $dtbname"
+
 	scp uImage ${uploaduser}@${uploadserver}:${uploaddir}/${imagename}
+	scp bpi-r64.dtb ${uploaduser}@${uploadserver}:${uploaddir}/${dtbname}
 }
 
 function install {
