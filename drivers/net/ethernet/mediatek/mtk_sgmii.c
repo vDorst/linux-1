@@ -12,7 +12,7 @@
 #include <linux/regmap.h>
 
 #include "mtk_eth_soc.h"
-
+#define DEBUG 1
 int mtk_sgmii_init(struct mtk_sgmii *ss, struct device_node *r, u32 ana_rgc3)
 {
 	struct device_node *np;

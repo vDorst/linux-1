@@ -21,7 +21,7 @@
 #include <linux/phylink.h>
 
 #include "mtk_eth_soc.h"
-
+#define DEBUG 1
 static int mtk_msg_level = -1;
 module_param_named(msg_level, mtk_msg_level, int, 0);
 MODULE_PARM_DESC(msg_level, "Message level (-1=defaults,0=none,...,16=all)");
