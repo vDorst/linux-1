@@ -246,6 +246,7 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 				err = mtk_gmac_sgmii_path_setup(eth, mac->id);
 				if (err)
 					goto init_err;
+				pr_info("%s: Setup SGMII SGMIIMAC%d\n", __func__, mac->id);
 			}
 			break;
 		case PHY_INTERFACE_MODE_GMII:
@@ -262,6 +263,7 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		/* Setup clock for 1st gmac */
 		if (!mac->id && state->interface != PHY_INTERFACE_MODE_SGMII &&
 		    MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII)) {
+			pr_info("%s: Setup TRGMII GMAC%d\n", __func__, mac->id);
 			if (MTK_HAS_CAPS(mac->hw->soc->caps,
 					 MTK_TRGMII_MT7621_CLK)) {
 				if (mt7621_gmac0_rgmii_adjust(mac->hw,
@@ -329,16 +331,23 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		       0 : mac->id;
 
 		/* Setup SGMIISYS with the determined property */
-		if (phylink_autoneg_inband(mode))
+		if (phylink_autoneg_inband(mode)) {
+			pr_info("%s: SGMII MAC SETUP%d: AN\n", __func__, sid);
 			err = mtk_sgmii_setup_mode_an(eth->sgmii, sid);
+		}
 		else
+		{
+			pr_info("%s: SGMII MAC SETUP%d: FORCED speed: %d\n", __func__, sid, state->speed);
 			err = mtk_sgmii_setup_mode_force(eth->sgmii, sid,
 							 state->speed);
+                }
 		if (err)
 			goto init_err;
 
 		regmap_update_bits(eth->ethsys, ETHSYS_SYSCFG0,
 				   SYSCFG0_SGMII_MASK, val);
+
+		pr_info("%s: SGMII MAC SETUP%d: DONE\n", __func__, sid);
 
 		return;
 	}

@@ -28,6 +28,7 @@ int mtk_sgmii_init(struct mtk_sgmii *ss, struct device_node *r, u32 ana_rgc3)
 		ss->regmap[i] = syscon_node_to_regmap(np);
 		if (IS_ERR(ss->regmap[i]))
 			return PTR_ERR(ss->regmap[i]);
+		pr_info("%s: sgmiisys %d found\n", __func__, i);
 	}
 
 	return 0;
@@ -39,6 +40,8 @@ int mtk_sgmii_setup_mode_an(struct mtk_sgmii *ss, int id)
 
 	if (!ss->regmap[id])
 		return -EINVAL;
+
+	pr_info("%s: SGMIIMAC%d\n", __func__, id);
 
 	/* Setup the link timer and QPHY power up inside SGMIISYS */
 	regmap_write(ss->regmap[id], SGMSYS_PCS_LINK_TIMER,
@@ -65,6 +68,8 @@ int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id, int speed)
 
 	if (!ss->regmap[id])
 		return -EINVAL;
+
+	pr_info("%s: SGMIIMAC%d: speed: %d\n", __func__, id, speed);
 
 	regmap_read(ss->regmap[id], ss->ana_rgc3, &val);
 	val &= ~GENMASK(3, 2);
