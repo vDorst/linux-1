@@ -67,7 +67,7 @@ int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id, int speed)
 		return -EINVAL;
 
 	regmap_read(ss->regmap[id], ss->ana_rgc3, &val);
-	val &= ~GENMASK(2, 3);
+	val &= ~GENMASK(3, 2);
 	if (speed == SPEED_2500)
 		val |= BIT(2);
 	regmap_write(ss->regmap[id], ss->ana_rgc3, val);
