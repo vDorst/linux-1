@@ -449,12 +449,12 @@ if [ -n "$kernver" ]; then
 			deb
 			;;
 		"dtsi")
-			echo "edit mt7623.dtsi"
+			echo "edit mt7622.dtsi"
 			nano arch/arm64/boot/dts/mediatek/mt7622.dtsi
 			;;
 
 		"dts")
-			echo "edit mt7623n-bpi.dts"
+			echo "edit mt7622-bpi-r64.dts"
 			nano arch/arm64/boot/dts/mediatek/mt7622-bananapi-bpi-r64.dts
 			;;
 
