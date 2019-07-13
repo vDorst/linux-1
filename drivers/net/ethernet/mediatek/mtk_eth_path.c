@@ -11,7 +11,7 @@
 #include <linux/regmap.h>
 
 #include "mtk_eth_soc.h"
-
+#define DEBUG 1
 struct mtk_eth_muxc {
 	const char	*name;
 	int		cap_bit;
@@ -65,7 +65,7 @@ static int set_mux_gdm1_to_gmac1_esw(struct mtk_eth *eth, int path)
 		mtk_w32(eth, val, MTK_MAC_MISC);
 	}
 
-	dev_dbg(eth->dev, "path %s in %s updated = %d\n",
+	dev_info(eth->dev, "path %s in %s updated = %d\n",
 		mtk_eth_path_name(path), __func__, updated);
 
 	return 0;
@@ -88,7 +88,7 @@ static int set_mux_gmac2_gmac0_to_gephy(struct mtk_eth *eth, int path)
 	if (updated)
 		regmap_update_bits(eth->infra, INFRA_MISC2, GEPHY_MAC_SEL, val);
 
-	dev_dbg(eth->dev, "path %s in %s updated = %d\n",
+	dev_info(eth->dev, "path %s in %s updated = %d\n",
 		mtk_eth_path_name(path), __func__, updated);
 
 	return 0;
@@ -111,7 +111,7 @@ static int set_mux_u3_gmac2_to_qphy(struct mtk_eth *eth, int path)
 	if (updated)
 		regmap_update_bits(eth->infra, INFRA_MISC2, CO_QPHY_SEL, val);
 
-	dev_dbg(eth->dev, "path %s in %s updated = %d\n",
+	dev_info(eth->dev, "path %s in %s updated = %d\n",
 		mtk_eth_path_name(path), __func__, updated);
 
 	return 0;
@@ -149,7 +149,7 @@ static int set_mux_gmac1_gmac2_to_sgmii_rgmii(struct mtk_eth *eth, int path)
 		regmap_update_bits(eth->ethsys, ETHSYS_SYSCFG0,
 				   SYSCFG0_SGMII_MASK, val);
 
-	dev_dbg(eth->dev, "path %s in %s updated = %d\n",
+	dev_info(eth->dev, "path %s in %s updated = %d\n",
 		mtk_eth_path_name(path), __func__, updated);
 
 	return 0;
@@ -180,7 +180,7 @@ static int set_mux_gmac12_to_gephy_sgmii(struct mtk_eth *eth, int path)
 		regmap_update_bits(eth->ethsys, ETHSYS_SYSCFG0,
 				   SYSCFG0_SGMII_MASK, val);
 
-	dev_dbg(eth->dev, "path %s in %s updated = %d\n",
+	dev_info(eth->dev, "path %s in %s updated = %d\n",
 		mtk_eth_path_name(path), __func__, updated);
 
 	return 0;
@@ -230,7 +230,7 @@ static int mtk_eth_mux_setup(struct mtk_eth *eth, int path)
 			if (err)
 				goto out;
 		} else {
-			dev_dbg(eth->dev, "mux %s isn't present on the SoC\n",
+			dev_info(eth->dev, "mux %s isn't present on the SoC\n",
 				mtk_eth_muxc[i].name);
 		}
 	}

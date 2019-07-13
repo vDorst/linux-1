@@ -21,7 +21,7 @@
 #include <linux/phylink.h>
 
 #include "mtk_eth_soc.h"
-
+#define DEBUG 1
 static int mtk_msg_level = -1;
 module_param_named(msg_level, mtk_msg_level, int, 0);
 MODULE_PARM_DESC(msg_level, "Message level (-1=defaults,0=none,...,16=all)");
@@ -318,7 +318,9 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		/* The path GMAC to SGMII will be enabled once the SGMIISYS is 
 		 * being setup done.
 		 */
-		regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
+		//regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
+		err=regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
+		pr_info("ETHSYS_SYSCFG0: err: 0x%x, val: 0x%x\n", err, val);
 
 		regmap_update_bits(eth->ethsys, ETHSYS_SYSCFG0,
 				   SYSCFG0_SGMII_MASK,
