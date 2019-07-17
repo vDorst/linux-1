@@ -502,6 +502,13 @@ static void mtk_validate(struct phylink_config *config,
 	phylink_set(mask, Pause);
 	phylink_set(mask, Asym_Pause);
 
+	if (phylink_test(mask, Pause))
+		pr_info("%s: mask: Pause\n", __func__);
+	if (phylink_test(supported, Pause))
+		pr_info("%s: supported: Pause\n", __func__);
+	if (phylink_test(state->advertising, Pause))
+		pr_info("%s: advertising: Pause\n", __func__);
+
 	linkmode_and(supported, supported, mask);
 	linkmode_and(state->advertising, state->advertising, mask);
 

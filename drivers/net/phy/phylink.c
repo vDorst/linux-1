@@ -210,12 +210,39 @@ static int phylink_parse_fixedlink(struct phylink *pl,
 
 	bitmap_fill(pl->supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
 	linkmode_copy(pl->link_config.advertising, pl->supported);
+
+	if (phylink_test(pl->link_config.advertising, Pause))
+		pr_info("%s: config: Pause\n", __func__);
+
+	if (phylink_test(pl->supported, Pause))
+		pr_info("%s: support: Pause\n", __func__);
+
 	phylink_validate(pl, pl->supported, &pl->link_config);
+
+	if (phylink_test(pl->link_config.advertising, Pause))
+		pr_info("%s: config2: Pause\n", __func__);
+
+	if (phylink_test(pl->supported, Pause))
+		pr_info("%s: support2: Pause\n", __func__);
 
 	s = phy_lookup_setting(pl->link_config.speed, pl->link_config.duplex,
 			       pl->supported, true);
+
+	if (phylink_test(pl->link_config.advertising, Pause))
+		pr_info("%s: config3: Pause\n", __func__);
+
+	if (phylink_test(pl->supported, Pause))
+		pr_info("%s: support3: Pause\n", __func__);
+
 	linkmode_zero(pl->supported);
 	phylink_set(pl->supported, MII);
+
+	if (phylink_test(pl->link_config.advertising, Pause))
+		pr_info("%s: config4: Pause\n", __func__);
+
+	if (phylink_test(pl->supported, Pause))
+		pr_info("%s: support4: Pause\n", __func__);
+
 	if (s) {
 		__set_bit(s->bit, pl->supported);
 	} else {
@@ -224,8 +251,21 @@ static int phylink_parse_fixedlink(struct phylink *pl,
 			     pl->link_config.speed);
 	}
 
+	if (phylink_test(pl->link_config.advertising, Pause))
+		pr_info("%s: config5: Pause\n", __func__);
+
+	if (phylink_test(pl->supported, Pause))
+		pr_info("%s: support5: Pause\n", __func__);
+
 	linkmode_and(pl->link_config.advertising, pl->link_config.advertising,
 		     pl->supported);
+
+	if (phylink_test(pl->link_config.advertising, Pause))
+		pr_info("%s: config6: Pause\n", __func__);
+
+	if (phylink_test(pl->supported, Pause))
+		pr_info("%s: support6: Pause\n", __func__);
+
 
 	pl->link_config.link = 1;
 	pl->link_config.an_complete = 1;
@@ -386,9 +426,14 @@ static void phylink_resolve_flow(struct phylink *pl,
 		int pause = 0;
 
 		if (phylink_test(pl->link_config.advertising, Pause))
+			pr_info("%s: config: Pause\n", __func__);
+
+		if (phylink_test(pl->link_config.advertising, Pause))
 			pause |= MLO_PAUSE_SYM;
 		if (phylink_test(pl->link_config.advertising, Asym_Pause))
 			pause |= MLO_PAUSE_ASYM;
+
+		pr_info("%s: PAUSE_AN: pause: %x, %x, %x", __func__, pause, state->pause, pl->link_config.advertising);
 
 		pause &= state->pause;
 
@@ -403,6 +448,8 @@ static void phylink_resolve_flow(struct phylink *pl,
 
 	state->pause &= ~MLO_PAUSE_TXRX_MASK;
 	state->pause |= new_pause;
+
+	pr_info("%s: new_pause: %x", __func__, new_pause);
 }
 
 static const char *phylink_pause_to_str(int pause)
@@ -628,13 +675,25 @@ struct phylink *phylink_create(struct phylink_config *config,
 
 	bitmap_fill(pl->supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
 	linkmode_copy(pl->link_config.advertising, pl->supported);
+
+	if (phylink_test(pl->link_config.advertising, Pause))
+		pr_info("%s: config0: Pause\n", __func__);
+	if (phylink_test(pl->supported, Pause))
+		pr_info("%s: supported: Pause\n", __func__);
+
 	phylink_validate(pl, pl->supported, &pl->link_config);
+
+	if (phylink_test(pl->link_config.advertising, Pause))
+		pr_info("%s: config1: Pause\n", __func__);
 
 	ret = phylink_parse_mode(pl, fwnode);
 	if (ret < 0) {
 		kfree(pl);
 		return ERR_PTR(ret);
 	}
+
+	if (phylink_test(pl->link_config.advertising, Pause))
+		pr_info("%s: config2: Pause\n", __func__);
 
 	if (pl->link_an_mode == MLO_AN_FIXED) {
 		ret = phylink_parse_fixedlink(pl, fwnode);
@@ -644,11 +703,17 @@ struct phylink *phylink_create(struct phylink_config *config,
 		}
 	}
 
+	if (phylink_test(pl->link_config.advertising, Pause))
+		pr_info("%s: config3: Pause\n", __func__);
+
 	ret = phylink_register_sfp(pl, fwnode);
 	if (ret < 0) {
 		kfree(pl);
 		return ERR_PTR(ret);
 	}
+
+	if (phylink_test(pl->link_config.advertising, Pause))
+		pr_info("%s: config4: Pause\n", __func__);
 
 	return pl;
 }
@@ -743,7 +808,7 @@ static int phylink_bringup_phy(struct phylink *pl, struct phy_device *phy)
 	mutex_unlock(&pl->state_mutex);
 	mutex_unlock(&phy->lock);
 
-	phylink_dbg(pl,
+	phylink_info(pl,
 		    "phy: setting supported %*pb advertising %*pb\n",
 		    __ETHTOOL_LINK_MODE_MASK_NBITS, pl->supported,
 		    __ETHTOOL_LINK_MODE_MASK_NBITS, phy->advertising);
