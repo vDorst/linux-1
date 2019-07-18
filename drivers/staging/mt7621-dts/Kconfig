@@ -14,3 +14,8 @@ config DTB_UBNT_ERX_SFP
 	depends on SOC_MT7621 && DTB_RT_NONE
 	select BUILTIN_DTB
 
+config DTB_MTC_WR1201
+	bool "MTC Wireless Router WR1201"
+	depends on SOC_MT7621 && DTB_RT_NONE
+	select BUILTIN_DTB
+
