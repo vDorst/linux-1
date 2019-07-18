@@ -17,7 +17,7 @@
 	};
 
 	chosen {
-		bootargs = "console=ttyS0,57600";
+		bootargs = "console=ttyS0,57600 debug";
 	};
 
 	leds {
@@ -47,8 +47,7 @@
 	};
 
 	keys {
-		compatible = "gpio-keys-polled";
-		poll-interval = <20>;
+		compatible = "gpio-keys";
 
 		reset {
 			label = "reset";
@@ -106,10 +105,10 @@
 
 &eth {
 	status = "okay";
-	mtd-mac-address = <&factory 0x4>;
 
 	gmac0: mac@0 {
 		compatible = "mediatek,eth-mac";
+		mtd-mac-address = <&factory 0x4>;
 		reg = <0>;
 		phy-mode = "trgmii";
 
@@ -120,13 +119,15 @@
 		};
 	};
 
+/*
 	gmac1: mac@1 {
 		compatible = "mediatek,eth-mac";
 		reg = <1>;
-		label = "lan5";
+		label = "wan";
 		phy-mode = "rgmii-txid";
 		phy-handle = <&phy4>;
 	};
+*/
 
 	mdio: mdio-bus {
 		#address-cells = <1>;
@@ -154,30 +155,28 @@
 		
 				port@0 {
 					reg = <0>;
-					label = "lan1";
+					label = "lan4";
 				};
 		
 				port@1 {
 					reg = <1>;
-					label = "lan2";
+					label = "lan3";
 				};
 		
 				port@2 {
 					reg = <2>;
-					label = "lan3";
+					label = "lan2";
 				};
 		
 				port@3 {
 					reg = <3>;
-					label = "lan4";
+					label = "lan1";
 				};
 
-/*
 				port@4 {
 					reg = <4>;
 					label = "wan";
 				};
-*/
 
 				cpu_port0: port@6 {
 					reg = <6>;
@@ -226,6 +225,15 @@
 		led {
 			led-sources = <2>;
 			led-active-low;
+		};
+	};
+};
+
+&pinctrl {
+	state_default: pinctrl0 {
+		gpio {
+			groups = "jtag", "rgmii2";
+			function = "gpio";
 		};
 	};
 };
