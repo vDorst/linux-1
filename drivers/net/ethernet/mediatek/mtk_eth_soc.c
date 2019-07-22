@@ -425,7 +425,10 @@ static int mtk_mac_link_state(struct phylink_config *config,
 
 static void mtk_mac_an_restart(struct phylink_config *config)
 {
-	/* Do nothing */
+	struct mtk_mac *mac = container_of(config, struct mtk_mac,
+					   phylink_config);
+
+	mtk_sgmii_restart_an(mac->hw, mac->id);
 }
 
 static void mtk_mac_link_down(struct phylink_config *config, unsigned int mode,
