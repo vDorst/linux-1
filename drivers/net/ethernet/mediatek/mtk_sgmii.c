@@ -98,6 +98,8 @@ int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id,
 	if (state->duplex == DUPLEX_FULL)
 		val |= SGMII_DUPLEX_FULL;
 
+	//val = 0x31120019; //original-value
+	printk(KERN_ALERT "DEBUG: Passed %s %d val:0x%x\n",__FUNCTION__,__LINE__,val);
 	regmap_write(ss->regmap[id], SGMSYS_SGMII_MODE, val);
 
 	/* Release PHYA power down state */
