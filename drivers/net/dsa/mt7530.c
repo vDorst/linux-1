@@ -1279,6 +1279,8 @@ mt7530_setup(struct dsa_switch *ds)
 				continue;
 
 			ret = of_property_read_u32(mac_np, "reg", &id);
+			if (ret >= 0)
+				pr_info("scan: GMAC%d\n", id);
 			if (ret < 0 || id != 1)
 				continue;
 
@@ -1288,6 +1290,7 @@ mt7530_setup(struct dsa_switch *ds)
 				if (ret && ret != -ENODEV)
 					return ret;
 				id = of_mdio_parse_addr(ds->dev, phy_node);
+				pr_info("scan phy addr:%d\n", id);
 				if (id == 0)
 					priv->p5_intf_sel = P5_INTF_SEL_PHY_P0;
 				if (id == 4)
@@ -1315,6 +1318,8 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 	struct mt7530_priv *priv = ds->priv;
 	u32 mcr_cur, mcr_new;
 
+	dev_err(ds->dev, "%s: P%i mode: %s\n", __func__, port, phy_modes(state->interface));
+
 	switch (port) {
 	case 0: /* Internal phy */
 	case 1:
@@ -1332,6 +1337,8 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 		    state->interface != PHY_INTERFACE_MODE_GMII)
 			return;
 
+		dev_err(ds->dev, "%s: Setup P%i mode: %s\n", __func__, port, phy_modes(state->interface));
+
 		mt7530_setup_port5(ds, state->interface);
 		break;
 	case 6: /* 1st cpu port */
@@ -1341,6 +1348,8 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 		if (state->interface != PHY_INTERFACE_MODE_RGMII &&
 		    state->interface != PHY_INTERFACE_MODE_TRGMII)
 			return;
+
+		dev_err(ds->dev, "%s: Setup P%i mode: %s\n", __func__, port, phy_modes(state->interface));
 
 		/* Setup TX circuit incluing relevant PAD and driving */
 		mt7530_pad_clk_setup(ds, state->interface);
@@ -1413,6 +1422,8 @@ static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
 				    struct phylink_link_state *state)
 {
 	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
+
+	dev_err(ds->dev, "%s: port: %i mode: %s\n", __func__, port, phy_modes(state->interface));
 
 	switch (port) {
 	case 0: /* Internal phy */
