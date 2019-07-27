@@ -6,11 +6,6 @@
 / {
 	compatible = "ubiquiti,edgerouterx", "mediatek,mt7621-soc";
 
-	memory@0 {
-		device_type = "memory";
-		reg = <0x0 0x10000000>;
-	};
-
 	chosen {
 		bootargs = "console=ttyS0,57600 rootfstype=squashfs,jffs2 debug";
 	};
@@ -71,7 +66,7 @@
 &pinctrl {
 	state_default: pinctrl0 {
 		gpio {
-			groups = "uart2", "uart3", "rgmii2", "jtag";
+			groups = "uart2", "uart3", "jtag";
 			function = "gpio";
 		};
 	};
@@ -126,16 +121,14 @@
 		};
 	};
 
-/*
 	gmac1: mac@1 {
 		compatible = "mediatek,eth-mac";
 		mtd-mac-address = <&factory 0x22>;
 		reg = <1>;
-		label = "eth4";
+		label = "lan5";
 		phy-mode = "rgmii-txid";
 		phy-handle = <&phy4>;
 	};
-*/
 
 	mdio: mdio-bus {
 		#address-cells = <1>;
@@ -170,7 +163,7 @@
 					reg = <0>;
 					label = "lan0";
 				};
-		
+
 				port@1 {
 					reg = <1>;
 					label = "lan1";
@@ -189,6 +182,7 @@
 				port@4 {
 					reg = <4>;
 					label = "lan4";
+					status = "disabled";
 				};
 
 				cpu_port0: port@6 {
