@@ -468,16 +468,10 @@ static int at803x_config_init(struct phy_device *phydev)
 
 		__set_bit(ETHTOOL_LINK_MODE_Pause_BIT, supported);
 		__set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, supported);
-		__set_bit(ETHTOOL_LINK_MODE_10baseT_Full_BIT, supported);
-		__set_bit(ETHTOOL_LINK_MODE_10baseT_Half_BIT, supported);
-		__set_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT, supported);
-		__set_bit(ETHTOOL_LINK_MODE_100baseT_Half_BIT, supported);
-		__set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, supported);
-		__set_bit(ETHTOOL_LINK_MODE_1000baseT_Half_BIT, supported);
 		__set_bit(ETHTOOL_LINK_MODE_1000baseX_Full_BIT, supported);
 		__set_bit(ETHTOOL_LINK_MODE_FIBRE_BIT, supported);
-		__set_bit(ETHTOOL_LINK_MODE_TP_BIT, supported);
 		__set_bit(ETHTOOL_LINK_MODE_MII_BIT, supported);
+		__set_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, supported);
 
 		linkmode_copy(phydev->supported, supported);
 	} else {
@@ -562,6 +556,7 @@ static void at803x_link_change_notify(struct phy_device *phydev)
 
 		phydev_dbg(phydev, "%s(): phy was reset\n", __func__);
 	}
+	pr_info("%s:\n", __func__);
 }
 
 /* For at8031/33 */
@@ -596,8 +591,9 @@ static void at8031_link_change_notify(struct phy_device *phydev)
  */
 static void fiber_lpa_mod_linkmode_lpa_t(unsigned long *lp_advertising, u32 lpa)
 {
-	linkmode_mod_bit(ETHTOOL_LINK_MODE_1000baseT_Half_BIT,
-			 lp_advertising, lpa & LPA_1000XHALF);
+
+	// linkmode_mod_bit(ETHTOOL_LINK_MODE_1000baseT_Half_BIT,
+	//		 lp_advertising, lpa & LPA_1000XHALF);
 
 	linkmode_mod_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
 			 lp_advertising, lpa & LPA_1000XFULL);
@@ -611,10 +607,8 @@ static void fiber_lpa_mod_linkmode_lpa_t(unsigned long *lp_advertising, u32 lpa)
 	linkmode_mod_bit(ETHTOOL_LINK_MODE_Autoneg_BIT,
 			 lp_advertising, lpa & LPA_LPACK);
 
-	linkmode_mod_bit(ETHTOOL_LINK_MODE_1000baseX_Full_BIT,
-			 lp_advertising, lpa & LPA_1000XFULL);
+	//__set_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, lp_advertising);
 	__set_bit(ETHTOOL_LINK_MODE_FIBRE_BIT, lp_advertising);
-
 }
 
 static int at803x_read_status_page_an(struct phy_device *phydev)
@@ -634,6 +628,8 @@ static int at803x_read_status_page_an(struct phy_device *phydev)
 		phydev->duplex = DUPLEX_FULL;
 	else
 		phydev->duplex = DUPLEX_HALF;
+
+
 
 	phydev->pause = 0;
 	phydev->asym_pause = 0;
@@ -665,6 +661,8 @@ static int at803x_read_status_page_an(struct phy_device *phydev)
 			phydev->asym_pause = 1;
 		}
 	}
+
+	pr_info("%s: PSSR:%x LPA: %x AD:%x\n", __func__, status, lpa, phydev->lp_advertising);
 
 	return 0;
 }
