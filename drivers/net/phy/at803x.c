@@ -400,7 +400,7 @@ static int at803x_probe(struct phy_device *phydev)
 	phydev->priv = priv;
 	dev_set_drvdata(&phydev->mdio.dev, priv);
 
-	at803x_dump_regs(phydev);
+	// at803x_dump_regs(phydev);
 
 	if (phydev->mdio.dev.fwnode) {
 		struct fwnode_reference_args ref;
@@ -517,31 +517,17 @@ static int at803x_config_init(struct phy_device *phydev)
 		struct at803x_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
 		u32 v;
 
-		pr_info("%s: FIBER, SGMII:%x\n", __func__, priv->sfp_is_sgmii);
+		pr_info("%s: FIBER, SerDes:%x\n", __func__, priv->sfp_is_sgmii);
 
 		if (priv->sfp_bus_attached)
 			phydev->attached_dev->sfp_bus = priv->sfp_bus;
-
-		v = phy_read(phydev, AT803X_REG_CHIP_CONFIG);
-		/* select SGMII/fiber page */
-
-		ret = phy_write(phydev, AT803X_REG_CHIP_CONFIG,
-						v & ~AT803X_BT_BX_REG_SEL);
-		if (ret)
-			return ret;
 
 		/* enable SGMII autonegotiation */
 		ret = phy_write(phydev, MII_BMCR, AT803X_SGMII_ANEG_EN);
 		if (ret)
 			return ret;
 
-		/* select copper page */
-		ret = phy_write(phydev, AT803X_REG_CHIP_CONFIG,
-						v | AT803X_BT_BX_REG_SEL);
-		if (ret)
-			return ret;
-	
-		at8031_fiber_config_init(phydev);
+		// at8031_fiber_config_init(phydev);
 	}
 	
 	ret = genphy_config_init(phydev);
@@ -796,100 +782,11 @@ static int at803x_read_status(struct phy_device *phydev) {
 	int ret, pssr;
 
 	/* Handle (Fiber) SGMII to RGMII mode */
-	if (at803x_mode(phydev) == AT803X_MODE_FIBER) {
-		ret = at803x_select_page_fiber(phydev);
-		if (ret)
-			return ret;
-
-
+	if (at803x_mode(phydev) == AT803X_MODE_FIBER)
 		ret = genphy_c37_read_status(phydev);
-
-		/* select Copper page */
-		at803x_select_page_copper(phydev);
-
-		return ret;
-
-		// phydev->link = 0;
-		// if ((pssr & PSSR_SYNC_STATUS) && (pssr & PSSR_LINK))
-		// 	phydev->link = 1;
-
-		// if (phydev->autoneg == AUTONEG_ENABLE)
-		// 	ret = at803x_read_status_page_an(phydev);
-		//else
-		//	ret = at803x_read_status_page_fixed(phydev);
-
-		if (ret)
-			return ret;
-
-		/* select Copper page */
-		ret = at803x_select_page_copper(phydev);
-
-		return ret;
-	}
-
-	return genphy_read_status(phydev);
-}
-
-/**
- * marvell_config_aneg_fiber - restart auto-negotiation or write BMCR
- * @phydev: target phy_device struct
- *
- * Description: If auto-negotiation is enabled, we configure the
- *   advertising, and then restart auto-negotiation.  If it is not
- *   enabled, then we write the BMCR. Adapted for fiber link in
- *   some Marvell's devices.
- */
-static int at803x_config_aneg_fiber(struct phy_device *phydev)
-{
-	int changed = 0;
-	int err;
-	int adv, oldadv;
-
-	/* Only allow advertising what this PHY supports */
-	linkmode_and(phydev->advertising, phydev->advertising,
-		     phydev->supported);
-
-	pr_info("%s: Restart SGMII autoneg\n", __func__);
-	phy_modify(phydev, MII_BMCR, 0, BMCR_ANENABLE | BIT(9)); 
-
-	/* Setup fiber advertisement */
-	adv = phy_read(phydev, MII_ADVERTISE);
-	if (adv < 0)
-		return adv;
-
-	oldadv = adv;
-	adv &= ~(ADVERTISE_FIBER_1000HALF | ADVERTISE_FIBER_1000FULL
-		| LPA_PAUSE_FIBER);
-	adv |= linkmode_adv_to_fiber_adv_t(phydev->advertising);
-
-	if (adv != oldadv) {
-		err = phy_write(phydev, MII_ADVERTISE, adv);
-		if (err < 0)
-			return err;
-
-		changed = 1;
-	}
-
-	if (changed == 0) {
-		/* Advertisement hasn't changed, but maybe aneg was never on to
-		 * begin with?	Or maybe phy was isolated?
-		 */
-		int ctl = phy_read(phydev, MII_BMCR);
-
-		if (ctl < 0)
-			return ctl;
-
-		if (!(ctl & BMCR_ANENABLE) || (ctl & BMCR_ISOLATE))
-			changed = 1; /* do restart aneg */
-	}
-
-	/* Only restart aneg if we are advertising something different
-	 * than we were before.
-	 */
-	if (changed > 0)
-		changed = genphy_restart_aneg(phydev);
-
-	return changed;
+	else
+		ret = genphy_read_status(phydev);
+	return ret;
 }
 
 static int at803x_get_features(struct phy_device *phydev)
@@ -917,66 +814,7 @@ static int at803x_config_aneg(struct phy_device *phydev)
 	/* Handle (Fiber) SerDes to RGMII mode */
 	if (at803x_mode(phydev) == AT803X_MODE_FIBER) {
 		pr_warn("%s: fiber\n", __func__);
-
-
-		/* select fiber page */
-		ret = at803x_select_page_fiber(phydev);
-		if (ret)
-			return ret;
-
-		ret = genphy_c37_config_aneg(phydev);
-
-		/* select copper page */
-		at803x_select_page_copper(phydev);
-		
-		return ret;
-
-
-		// OLD CODE
-		if (phydev->autoneg != AUTONEG_ENABLE) {
-			pr_warn("%s: fiber forced\n", __func__);
-			// force full speed.
-			//phy_write(phydev, MII_BMCR, 0x140);
-			phydev->speed = SPEED_1000;
-			phydev->duplex = DUPLEX_FULL;
-			phydev->pause = 1;
-			phydev->asym_pause = 1;
-			genphy_setup_forced(phydev);
-			phydev->speed = SPEED_1000;
-			phydev->duplex = DUPLEX_FULL;
-			phydev->pause = 1;
-			phydev->asym_pause = 1;
-			linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseX_Full_BIT, phydev->supported);
-			ret = phy_read(phydev, MII_BMCR);
-			pr_warn("%s: copper: BMCR: %x\n", __func__, ret);
-			return ret;
-		}
-
-		/* select fiber page */
-		ret = at803x_select_page_fiber(phydev);
-		if (ret)
-			return ret;
-
-
-		if (phydev->autoneg != AUTONEG_ENABLE) {
-			pr_warn("%s: fiber forced\n", __func__);
-			// force full speed.
-			//phy_write(phydev, MII_BMCR, 0x140);
-			genphy_setup_forced(phydev);
-			ret = phy_read(phydev, MII_BMCR);
-			pr_warn("%s: fiber: BMCR: %x\n", __func__, ret);
-
-			return ret;
-		}
-
-		ret = at803x_config_aneg_fiber(phydev);
-		if (ret)
-			return ret;
-
-
-		/* select copper page */
-		ret = at803x_select_page_copper(phydev);
-		return ret;
+		return genphy_c37_config_aneg(phydev);
 	}
 
 	pr_warn("%s: enter\n", __func__);
@@ -995,19 +833,11 @@ static int at803x_aneg_done(struct phy_device *phydev)
 
 		aneg_done = BMSR_ANEGCOMPLETE;
 
-		ret = at803x_select_page_fiber(phydev);
-		if (ret)
-			return ret;
-
 		/* check if the SGMII link is OK. */
 		if (!(phy_read(phydev, AT803X_PSSR) & AT803X_PSSR_MR_AN_COMPLETE)) {
 			pr_warn("803x_aneg_done: SGMII link is not ok\n");
 			aneg_done = 0;
 		}
-
-		ret = at803x_select_page_copper(phydev);
-		if (ret)
-			return ret;
 
 		return aneg_done;
 	}
