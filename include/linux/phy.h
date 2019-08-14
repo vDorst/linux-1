@@ -1082,6 +1082,10 @@ int genphy_resume(struct phy_device *phydev);
 int genphy_loopback(struct phy_device *phydev, bool enable);
 int genphy_soft_reset(struct phy_device *phydev);
 
+/* Clause 37 */
+int genphy_c37_config_aneg(struct phy_device *phydev);
+int genphy_c37_read_status(struct phy_device *phydev);
+
 static inline int genphy_config_aneg(struct phy_device *phydev)
 {
 	return __genphy_config_aneg(phydev, false);
