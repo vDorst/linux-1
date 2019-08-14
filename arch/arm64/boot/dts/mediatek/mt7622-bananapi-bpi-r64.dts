@@ -119,7 +119,7 @@
 	gmac0: mac@0 {
 		compatible = "mediatek,eth-mac";
 		reg = <0>;
-		phy-mode = "2500basex";
+		phy-mode = "2500base-x";
 
 		fixed-link {
 			speed = <2500>;
