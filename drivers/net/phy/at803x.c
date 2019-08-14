@@ -801,18 +801,22 @@ static int at803x_read_status(struct phy_device *phydev) {
 		if (ret)
 			return ret;
 
-		pssr = phy_read(phydev, AT803X_PSSR);
-		if (pssr < 0)
-			return pssr;
 
-		phydev->link = 0;
-		if ((pssr & PSSR_SYNC_STATUS) && (pssr & PSSR_LINK))
-			phydev->link = 1;
+		ret = genphy_c37_read_status(phydev);
 
-		if (phydev->autoneg == AUTONEG_ENABLE)
-			ret = at803x_read_status_page_an(phydev);
-		else
-			ret = at803x_read_status_page_fixed(phydev);
+		/* select Copper page */
+		at803x_select_page_copper(phydev);
+
+		return ret;
+
+		// phydev->link = 0;
+		// if ((pssr & PSSR_SYNC_STATUS) && (pssr & PSSR_LINK))
+		// 	phydev->link = 1;
+
+		// if (phydev->autoneg == AUTONEG_ENABLE)
+		// 	ret = at803x_read_status_page_an(phydev);
+		//else
+		//	ret = at803x_read_status_page_fixed(phydev);
 
 		if (ret)
 			return ret;
@@ -915,12 +919,20 @@ static int at803x_config_aneg(struct phy_device *phydev)
 		pr_warn("%s: fiber\n", __func__);
 
 
-
-		/* select copper page */
-		ret = at803x_select_page_copper(phydev);
+		/* select fiber page */
+		ret = at803x_select_page_fiber(phydev);
 		if (ret)
 			return ret;
 
+		ret = genphy_c37_config_aneg(phydev);
+
+		/* select copper page */
+		at803x_select_page_copper(phydev);
+		
+		return ret;
+
+
+		// OLD CODE
 		if (phydev->autoneg != AUTONEG_ENABLE) {
 			pr_warn("%s: fiber forced\n", __func__);
 			// force full speed.
