@@ -121,6 +121,7 @@
 		};
 	};
 
+/*
 	gmac1: mac@1 {
 		compatible = "mediatek,eth-mac";
 		mtd-mac-address = <&factory 0x22>;
@@ -129,6 +130,7 @@
 		phy-mode = "rgmii-txid";
 		phy-handle = <&phy4>;
 	};
+*/
 
 	mdio: mdio-bus {
 		#address-cells = <1>;
@@ -182,7 +184,7 @@
 				port@4 {
 					reg = <4>;
 					label = "lan4";
-					status = "disabled";
+					// status = "disabled";
 				};
 
 				cpu_port0: port@6 {
