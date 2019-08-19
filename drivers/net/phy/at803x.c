@@ -368,7 +368,8 @@ static int at803x_sfp_insert(void *upstream, const struct sfp_eeprom_id *id)
 
 	if (iface != PHY_INTERFACE_MODE_SGMII &&
 	    iface != PHY_INTERFACE_MODE_1000BASEX) {
-		dev_info(&phydev->mdio.dev, "incompatible SFP module inserted; Only SGMII/1000BASEX are supported!\n");
+		dev_info(&phydev->mdio.dev, "incompatible SFP module inserted;"
+			 " Only SGMII/1000BASEX are supported!\n");
 		return -EINVAL;
 	}
 
@@ -430,92 +431,12 @@ static int at803x_mode(struct phy_device *phydev)
 	return AT803X_MODE_COPPER;
 }
 
-/**
- * linkmode_adv_to_fiber_adv_t
- * @advertise: the linkmode advertisement settings
- *
- * A small helper function that translates linkmode advertisement
- * settings to phy autonegotiation advertisements for the MII_ADV
- * register for fiber link.
- */
-static inline u32 linkmode_adv_to_fiber_adv_t(unsigned long *advertise)
-{
-	u32 result = 0;
-
-	if (linkmode_test_bit(ETHTOOL_LINK_MODE_1000baseT_Half_BIT, advertise))
-		result |= ADVERTISE_FIBER_1000HALF;
-	if (linkmode_test_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, advertise))
-		result |= ADVERTISE_FIBER_1000FULL;
-
-	if (linkmode_test_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, advertise) &&
-	    linkmode_test_bit(ETHTOOL_LINK_MODE_Pause_BIT, advertise))
-		result |= LPA_PAUSE_ASYM_FIBER;
-	else if (linkmode_test_bit(ETHTOOL_LINK_MODE_Pause_BIT, advertise))
-		result |= (ADVERTISE_PAUSE_FIBER
-			   & (~ADVERTISE_PAUSE_ASYM_FIBER));
-
-	return result;
-}
-int at8031_fiber_config_init(struct phy_device *phydev)
-{
-	int val;
-	__ETHTOOL_DECLARE_LINK_MODE_MASK(features) = { 0, };
-
-	linkmode_set_bit(ETHTOOL_LINK_MODE_Pause_BIT, features);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, features);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_FIBRE_BIT, features);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_MII_BIT, features);
-
-	phydev->autoneg = AUTONEG_DISABLE;
-	phydev->speed = SPEED_1000;
-	phydev->duplex = DUPLEX_FULL;
-
-	/* Do we support autonegotiation? 0x01 */
-	val = phy_read(phydev, MII_BMSR);
-	if (val < 0)
-		return val;
-
-	if (val & BMSR_ANEGCAPABLE)
-		linkmode_set_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, features);
-
-	if (val & BMSR_100FULL)
-		linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT, features);
-	if (val & BMSR_100HALF)
-		linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Half_BIT, features);
-	if (val & BMSR_10FULL)
-		linkmode_set_bit(ETHTOOL_LINK_MODE_10baseT_Full_BIT, features);
-	if (val & BMSR_10HALF)
-		linkmode_set_bit(ETHTOOL_LINK_MODE_10baseT_Half_BIT, features);
-
-	if (val & BMSR_ESTATEN) { /* 0x0f */
-		val = phy_read(phydev, MII_ESTATUS);
-		if (val < 0)
-			return val;
-
-		if (val & ESTATUS_1000_TFULL)
-			linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
-					 features);
-		if (val & ESTATUS_1000_THALF)
-			linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Half_BIT,
-					 features);
-		if (val & ESTATUS_1000_XFULL)
-			linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseX_Full_BIT,
-					 features);
-	}
-
-	linkmode_and(phydev->supported, phydev->supported, features);
-	linkmode_and(phydev->advertising, phydev->advertising, features);
-
-	return 0;
-}
-
 static int at803x_config_init(struct phy_device *phydev)
 {
 	int ret;
 
 	if (at803x_mode(phydev) == AT803X_MODE_FIBER) {
 		struct at803x_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
-		u32 v;
 
 		pr_info("%s: FIBER, SerDes:%x\n", __func__, priv->sfp_is_sgmii);
 
@@ -526,13 +447,7 @@ static int at803x_config_init(struct phy_device *phydev)
 		ret = phy_write(phydev, MII_BMCR, AT803X_SGMII_ANEG_EN);
 		if (ret)
 			return ret;
-
-		// at8031_fiber_config_init(phydev);
 	}
-	
-	ret = genphy_config_init(phydev);
-	if (ret < 0)
-		return ret;
 
 	/* The RX and TX delay default is:
 	 *   after HW reset: RX delay enabled and TX delay disabled
@@ -635,151 +550,15 @@ static void at8031_link_change_notify(struct phy_device *phydev)
 	pr_info("%s:\n", __func__);
 }
 
-/**
- * fiber_lpa_mod_linkmode_lpa_t
- * @advertising: the linkmode advertisement settings
- * @lpa: value of the MII_LPA register for fiber link
- *
- * A small helper function that translates MII_LPA bits to linkmode LP
- * advertisement settings. Other bits in advertising are left
- * unchanged.
- */
-static void fiber_lpa_mod_linkmode_lpa_t(unsigned long *lp_advertising, u32 lpa)
-{
-	linkmode_mod_bit(ETHTOOL_LINK_MODE_1000baseX_Full_BIT,
-			 lp_advertising, lpa & LPA_1000XFULL);
-
-	// linkmode_mod_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
-	//	 lp_advertising, lpa & LPA_1000XFULL);
-
-	linkmode_mod_bit(ETHTOOL_LINK_MODE_Pause_BIT, lp_advertising,
-			 lpa & LPA_1000XPAUSE);
-
-	linkmode_mod_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT,
-			 lp_advertising, lpa & LPA_1000XPAUSE_ASYM);
-
-	linkmode_mod_bit(ETHTOOL_LINK_MODE_Autoneg_BIT,
-			 lp_advertising, lpa & LPA_LPACK);
-
-	//linkmode_set_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, lp_advertising);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_FIBRE_BIT, lp_advertising);
-}
-
-static int at803x_read_status_page_an(struct phy_device *phydev)
-{
-	struct at803x_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
-	int status;
-	int lpa,SR;
-
-	status = phy_read(phydev, AT803X_PSSR);
-	if (status < 0)
-		return status;
-
-	lpa = phy_read(phydev, MII_LPA);
-	if (lpa < 0)
-		return lpa;
-
-	SR = phy_read(phydev, MII_BMSR);
-
-	if (priv->sfp_is_sgmii) {
-		phydev->speed = SPEED_1000;
-		phydev->duplex = DUPLEX_FULL;
-		phydev->pause = 1;
-		phydev->asym_pause = 1;
-		
-		linkmode_zero(phydev->lp_advertising);
-		linkmode_set_bit(ETHTOOL_LINK_MODE_Pause_BIT, phydev->lp_advertising);
-		linkmode_set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, phydev->lp_advertising);
-		linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, phydev->lp_advertising);
-		linkmode_set_bit(ETHTOOL_LINK_MODE_TP_BIT, phydev->lp_advertising);
-
-		pr_info("%s: SGMII: PSSR:%x LPA: %x BMSR:%x AD:%lx\n", __func__, status, lpa, SR, *phydev->lp_advertising);
-		return 0;
-	}
-
-	if (status & PSSR_DUPLEX)
-		phydev->duplex = DUPLEX_FULL;
-	else
-		phydev->duplex = DUPLEX_HALF;
-
-
-	switch (status & (PSSR_SPEED_1000 | PSSR_SPEED_100)) {
-	case PSSR_SPEED_1000:
-		phydev->speed = SPEED_1000;
-		break;
-
-	case PSSR_SPEED_100:
-		phydev->speed = SPEED_100;
-		break;
-
-	default:
-		phydev->speed = SPEED_10;
-		break;
-	}
-
-	phydev->pause = 0;
-	phydev->asym_pause = 0;
-
-	if (phydev->duplex == DUPLEX_FULL) {
-		if (lpa & LPA_PAUSE_FIBER)
-			phydev->pause = 1;
-		if (lpa & LPA_PAUSE_ASYM_FIBER) {
-			phydev->pause = 1;
-			phydev->asym_pause = 1;
-		}
-	}
-
-	/* The fiber link is only 1000M capable */
-	fiber_lpa_mod_linkmode_lpa_t(phydev->lp_advertising, lpa);
-
-
-	pr_info("%s: PSSR:%x LPA: %x SR: %x AD:%lx\n", __func__, status,
-		lpa, SR, *phydev->lp_advertising);
-
-	return 0;
-}
-
-static int at803x_read_status_page_fixed(struct phy_device *phydev)
-{
-	int bmcr = phy_read(phydev, MII_BMCR);
-
-	if (bmcr < 0)
-		return bmcr;
-
-	if (bmcr & BMCR_FULLDPLX)
-		phydev->duplex = DUPLEX_FULL;
-	else
-		phydev->duplex = DUPLEX_HALF;
-
-	if (bmcr & BMCR_SPEED1000)
-		phydev->speed = SPEED_1000;
-	else if (bmcr & BMCR_SPEED100)
-		phydev->speed = SPEED_100;
-	else
-		phydev->speed = SPEED_10;
-
-	phydev->pause = 0;
-	phydev->asym_pause = 0;
-	linkmode_zero(phydev->lp_advertising);
-
-	return 0;
-}
-
-
-static int at803x_select_page_fiber(struct phy_device *phydev) 
+static int at803x_select_page_fiber(struct phy_device *phydev)
 {
 	return phy_modify(phydev, AT803X_REG_CHIP_CONFIG,
 			          AT803X_BT_BX_REG_SEL,0);
 }
 
-static int at803x_select_page_copper(struct phy_device *phydev) 
+static int at803x_read_status(struct phy_device *phydev)
 {
-	return phy_modify(phydev, AT803X_REG_CHIP_CONFIG,
-			          0, AT803X_BT_BX_REG_SEL);
-}
-
-static int at803x_read_status(struct phy_device *phydev) {
-	int ret, pssr;
+	int ret;
 
 	/* Handle (Fiber) SGMII to RGMII mode */
 	if (at803x_mode(phydev) == AT803X_MODE_FIBER)
@@ -789,28 +568,8 @@ static int at803x_read_status(struct phy_device *phydev) {
 	return ret;
 }
 
-static int at803x_get_features(struct phy_device *phydev)
-{
-	int ret = 0;
-
-	/* Handle (Fiber) SGMII to RGMII mode */
-	if (at803x_mode(phydev) == AT803X_MODE_FIBER) {
-		pr_warn("%s: fiber mode\n", __func__);
-		linkmode_set_bit(ETHTOOL_LINK_MODE_Pause_BIT, phydev->supported);
-		linkmode_set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, phydev->supported);
-		linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseX_Full_BIT, phydev->supported);
-		linkmode_set_bit(ETHTOOL_LINK_MODE_FIBRE_BIT, phydev->supported);
-		linkmode_set_bit(ETHTOOL_LINK_MODE_MII_BIT, phydev->supported);
-		linkmode_set_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, phydev->supported);
-	}
-
-	return ret;
-}
-
 static int at803x_config_aneg(struct phy_device *phydev)
 {
-	int ret;
-
 	/* Handle (Fiber) SerDes to RGMII mode */
 	if (at803x_mode(phydev) == AT803X_MODE_FIBER) {
 		pr_warn("%s: fiber\n", __func__);
@@ -824,18 +583,16 @@ static int at803x_config_aneg(struct phy_device *phydev)
 
 static int at803x_aneg_done(struct phy_device *phydev)
 {
-	int ccr, ret;
-	int aneg_done;
+	int ccr, aneg_done;
 
-	pr_warn("803x_aneg_done: enter\n");
+	pr_warn("%s: enter\n", __func__);
 
 	if (at803x_mode(phydev) == AT803X_MODE_FIBER) {
-
 		aneg_done = BMSR_ANEGCOMPLETE;
 
 		/* check if the SGMII link is OK. */
 		if (!(phy_read(phydev, AT803X_PSSR) & AT803X_PSSR_MR_AN_COMPLETE)) {
-			pr_warn("803x_aneg_done: SGMII link is not ok\n");
+			pr_warn("%s: SGMII link is not ok\n", __func__);
 			aneg_done = 0;
 		}
 
@@ -859,7 +616,7 @@ static int at803x_aneg_done(struct phy_device *phydev)
 
 	/* check if the SGMII link is OK. */
 	if (!(phy_read(phydev, AT803X_PSSR) & AT803X_PSSR_MR_AN_COMPLETE)) {
-		phydev_warn(phydev, "803x_aneg_done: SGMII link is not ok\n");
+		phydev_warn(phydev, "%s: SGMII link is not ok\n", __func__);
 		aneg_done = 0;
 	}
 	/* switch back to copper page */
@@ -910,7 +667,6 @@ static struct phy_driver at803x_driver[] = {
 	.suspend		= at803x_suspend,
 	.resume			= at803x_resume,
 	/* PHY_GBIT_FEATURES */
-	.get_features		= at803x_get_features,
 	.config_aneg		= at803x_config_aneg,
 	.read_status		= at803x_read_status,
 	.aneg_done		= at803x_aneg_done,
