@@ -218,8 +218,7 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 	int val, ge_mode, err;
 
 	/* MT76x8 has no hardware settings between for the MAC */
-	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628) &&
-	    mac->interface != state->interface) {
+	if (mac->interface != state->interface) {
 		/* Setup soc pin functions */
 		switch (state->interface) {
 		case PHY_INTERFACE_MODE_TRGMII:
