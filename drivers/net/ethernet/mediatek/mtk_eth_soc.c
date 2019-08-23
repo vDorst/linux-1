@@ -540,6 +540,12 @@ static void mtk_validate(struct phylink_config *config,
 	phylink_set(mask, Pause);
 	phylink_set(mask, Asym_Pause);
 
+	pr_info("%s: GMAC%d: phy: %s adv %*pb, %*pb, %*pb",
+		__func__, mac->id, phy_modes(state->interface),
+		 __ETHTOOL_LINK_MODE_MASK_NBITS, mask,
+		 __ETHTOOL_LINK_MODE_MASK_NBITS, supported,
+		 __ETHTOOL_LINK_MODE_MASK_NBITS, state->advertising);
+
 	linkmode_and(supported, supported, mask);
 	linkmode_and(state->advertising, state->advertising, mask);
 
