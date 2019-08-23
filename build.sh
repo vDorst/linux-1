@@ -7,6 +7,8 @@ fi
 
 . build.conf
 
+r64newswver=1.0
+
 if [[ -z "$board" ]];then board="bpi-r2";fi
 
 clr_red=$'\e[1;31m'
@@ -88,6 +90,8 @@ function get_version()
 	echo "generate branch vars..."
 	#kernbranch=$(git rev-parse --abbrev-ref HEAD)
 	kernbranch=$(git branch --contains $(git log -n 1 --pretty='%h') | grep -v '(HEAD' | head -1 | sed 's/^..//')
+	kernbranch=${kernbranch//frank-w_/}
+
 	gitbranch=$(echo $kernbranch|sed 's/^[45]\.[0-9]\+//'|sed 's/-rc$//')
 
 	echo "kernbranch:$kernbranch,gitbranch:$gitbranch"
@@ -141,16 +145,16 @@ function upload {
 	imagename="${input:-$imagename}"
 
 	echo "Name: $imagename"
-	echo "uploading to ${uploadserver}:${uploaddir}..."
 
 	if [[ "$board" == "bpi-r64" ]];then
 		dtbname="${kernver}${gitbranch}.dtb"
 		read -e -i $dtbname -p "dtb-filename: " input
 		dtbname="${input:-$dtbname}"
 
-		echo "Name: $dtbname"
+		echo "DTB Name: $dtbname"
 	fi
 
+	echo "uploading to ${uploadserver}:${uploaddir}..."
 	scp uImage ${uploaduser}@${uploadserver}:${uploaddir}/${imagename}
 	if [[ "$board" == "bpi-r64" ]];then
 		scp bpi-r64.dtb ${uploaduser}@${uploadserver}:${uploaddir}/${dtbname}
@@ -283,11 +287,11 @@ function deb {
 #    fname=bpi-r2_${kernver}_${gitbranch}.tar.gz
 #    tar -cz --owner=root --group=root -f $fname BPI-BOOT BPI-ROOT
 
+	rm -rf $targetdir/boot/bananapi/$board/linux/*
+	rm -rf $targetdir/lib/modules/*
 	mkdir -p $targetdir/boot/bananapi/$board/linux/dtb/
 	mkdir -p $targetdir/lib/modules/
 	mkdir -p $targetdir/DEBIAN/
-	rm $targetdir/boot/bananapi/$board/linux/*
-	rm -rf $targetdir/lib/modules/*
 
 	#sudo mount --bind ../SD/BPI-ROOT/lib/modules debian/bananapi-r2-image/lib/modules/
 	if test -e ./uImage && test -d ../SD/BPI-ROOT/lib/modules/${ver}; then
@@ -385,7 +389,7 @@ EOF
     fakeroot dpkg-deb --build bananapi-$boardv-image ../debian
     cd ..
     ls -lh debian/*.deb
-    debfile=debian/bananapi-$boardv-image-${kernbranch,,}_${kernver}-1_armhf.deb
+    debfile=debian/bananapi-$boardv-image-${kernbranch,,}_${kernver}-1_$debarch.deb
     dpkg -c $debfile
 
 	dpkg -I $debfile
@@ -407,6 +411,13 @@ function build {
 		rm ./uImage 2>/dev/null
 		rm ${board}.dtb 2>/dev/null
 
+		if [[ "$board" == "bpi-r64" ]];then
+			if (( $(echo "$boardversion < $r64newswver" |bc -l) ));then
+				CFLAGS="${CFLAGS} CONFIG_MT753X_GSW=n" #disable new switch
+			else
+				CFLAGS="${CFLAGS} CONFIG_RTL8367S_GSW=n" #disable old switch
+			fi
+		fi
 		exec 3> >(tee build.log)
 		export LOCALVERSION="${gitbranch}"
 		make ${CFLAGS} 2>&3 #&& make modules_install 2>&3
@@ -416,7 +427,11 @@ function build {
 		if [[ "$board" == "bpi-r64" ]];then
 			#how to create zImage?? make zImage does not work here
 			mkimage -A arm -O linux -T kernel -C none -a 40080000 -e 40080000 -n "Linux Kernel $kernver$gitbranch" -d arch/arm64/boot/Image ./uImage
-			cp arch/arm64/boot/dts/mediatek/mt7622-bananapi-bpi-r64.dtb $board.dtb
+			if (( $(echo "$boardversion < $r64newswver" |bc -l) ));then
+				cp arch/arm64/boot/dts/mediatek/mt7622-bananapi-bpi-r64.dtb $board.dtb
+			else
+				cp arch/arm64/boot/dts/mediatek/mt7622-bananapi-bpi-r64-mt7531.dtb $board.dtb
+			fi
 		else
 			if [[ $ret == 0 ]]; then
 				cat arch/arm/boot/zImage arch/arm/boot/dts/mt7623n-bananapi-bpi-r2.dtb > arch/arm/boot/zImage-dtb
@@ -482,9 +497,13 @@ function prepare_SD {
 		echo "blacklist cryptodev" >${INSTALL_MOD_PATH}/etc/modules-load.d/cryptodev.conf
 	fi
 
-	cp utils/wmt/config/* $SD/BPI-ROOT/system/etc/firmware/
-	cp utils/wmt/src/{wmt_loader,wmt_loopback,stp_uart_launcher} $SD/BPI-ROOT/usr/bin/
-	cp -r utils/wmt/firmware/* $SD/BPI-ROOT/etc/firmware/
+	if [[ -e "utils/wmt/src/wmt_loader" ]];then
+		cp utils/wmt/config/* $SD/BPI-ROOT/system/etc/firmware/
+		cp utils/wmt/src/{wmt_loader,wmt_loopback,stp_uart_launcher} $SD/BPI-ROOT/usr/bin/
+		cp -r utils/wmt/firmware/* $SD/BPI-ROOT/etc/firmware/
+	else
+		echo "WMT-Tools not available"
+	fi
 
 	if [[ -n "$(grep 'CONFIG_MT76=' .config)" ]];then
 		echo "MT76 set, including the firmware-files...";
@@ -584,7 +603,7 @@ if [ -n "$kernver" ]; then
 		"dtsi")
 			if [[ "$board" == "bpi-r64" ]];then
 				echo "edit mt7622.dtsi"
-				nano arch/arm64/boot/dts/mt7622.dtsi
+				nano arch/arm64/boot/dts/mediatek/mt7622.dtsi
 			else
 				echo "edit mt7623.dtsi"
 				nano arch/arm/boot/dts/mt7623.dtsi
@@ -594,7 +613,7 @@ if [ -n "$kernver" ]; then
 		"dts")
 			if [[ "$board" == "bpi-r64" ]];then
 				echo "edit mt7622n-bpi.dts"
-				nano arch/arm64/boot/dts/mt7622n-bananapi-bpi-r64.dts
+				nano arch/arm64/boot/dts/mediatek/mt7622-bananapi-bpi-r64.dts
 			else
 				echo "edit mt7623n-bpi.dts"
 				nano arch/arm/boot/dts/mt7623n-bananapi-bpi-r2.dts
