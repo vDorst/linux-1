@@ -67,37 +67,6 @@ static const struct mt7530_mib_desc mt7530_mib[] = {
 };
 
 static int
-core_read_mmd_indirect(struct mt7530_priv *priv, int prtad, int devad)
-{
-	struct mii_bus *bus = priv->bus;
-	int value, ret;
-
-	/* Write the desired MMD Devad */
-	ret = bus->write(bus, 0, MII_MMD_CTRL, devad);
-	if (ret < 0)
-		goto err;
-
-	/* Write the desired MMD register address */
-	ret = bus->write(bus, 0, MII_MMD_DATA, prtad);
-	if (ret < 0)
-		goto err;
-
-	/* Select the Function : DATA with no post increment */
-	ret = bus->write(bus, 0, MII_MMD_CTRL, (devad | MII_MMD_CTRL_NOINCR));
-	if (ret < 0)
-		goto err;
-
-	/* Read the content of the MMD's selected register */
-	value = bus->read(bus, 0, MII_MMD_DATA);
-
-	return value;
-err:
-	dev_err(&bus->dev,  "failed to read mmd register\n");
-
-	return ret;
-}
-
-static int
 core_write_mmd_indirect(struct mt7530_priv *priv, int prtad,
 			int devad, u32 data)
 {
@@ -138,28 +107,6 @@ core_write(struct mt7530_priv *priv, u32 reg, u32 val)
 	core_write_mmd_indirect(priv, reg, MDIO_MMD_VEND2, val);
 
 	mutex_unlock(&bus->mdio_lock);
-}
-
-static void
-core_rmw(struct mt7530_priv *priv, u32 reg, u32 mask, u32 set)
-{
-	struct mii_bus *bus = priv->bus;
-	u32 val;
-
-	mutex_lock_nested(&bus->mdio_lock, MDIO_MUTEX_NESTED);
-
-	val = core_read_mmd_indirect(priv, reg, MDIO_MMD_VEND2);
-	val &= ~mask;
-	val |= set;
-	core_write_mmd_indirect(priv, reg, MDIO_MMD_VEND2, val);
-
-	mutex_unlock(&bus->mdio_lock);
-}
-
-static void
-core_set(struct mt7530_priv *priv, u32 reg, u32 val)
-{
-	core_rmw(priv, reg, 0, val);
 }
 
 static int
@@ -366,11 +313,44 @@ mt7530_fdb_write(struct mt7530_priv *priv, u16 vid,
 		mt7530_write(priv, MT7530_ATA1 + (i * 4), reg[i]);
 }
 
+static void mt7530_trgmii_setting(struct mt7530_priv *priv)
+{
+	/* PLL BIAS enable */
+	core_write(priv, CORE_PLL_GROUP4,
+		   RG_SYSPLL_DDSFBK_EN | RG_SYSPLL_BIAS_EN);
+	mdelay(1);
+
+	/* PLL LPF enable */
+	core_write(priv, CORE_PLL_GROUP4,
+		   RG_SYSPLL_DDSFBK_EN | RG_SYSPLL_BIAS_EN |
+		   RG_SYSPLL_BIAS_LPF_EN);
+
+	/* sys PLL enable */
+	core_write(priv, CORE_PLL_GROUP2,
+		   RG_SYSPLL_EN_NORMAL | RG_SYSPLL_VODEN | RG_SYSPLL_POSDIV(1));
+
+	/* LCDDDS PWDS */
+	core_write(priv, CORE_PLL_GROUP7,
+		   RG_LCCDS_C(3) | RG_LCDDS_PWDB | RG_LCDDS_ISO_EN);
+	mdelay(1);
+
+	/* Enable MT7530 TRGMII clock */
+	core_write(priv, CORE_TRGMII_GSW_CLK_CG,
+		   REG_GSWCK_EN | REG_TRGMIICK_EN);
+}
+
+static void mt7530_rgmii_setting(struct mt7530_priv *priv)
+{
+	mt7530_rmw(priv, MT7530_TRGMII_TXCTRL, TXC_INV, 0);
+	core_write(priv, MT7530_TRGMII_TCK_CTRL, 0x855);
+}
+
 static int
 mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 {
 	struct mt7530_priv *priv = ds->priv;
-	u32 ncpo1, ssc_delta, trgint, i, xtal;
+	u32 ncpo1, ssc_delta, xtal, p6ecr;
+	u16 i;
 
 	xtal = mt7530_read(priv, MT7530_MHWTRAP) & HWTRAP_XTAL_MASK;
 
@@ -412,14 +392,14 @@ mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 		break;
 	}
 
-	switch (mode) {
-	case PHY_INTERFACE_MODE_RGMII:
-		trgint = 0;
-		/* PLL frequency: 125MHz */
-		ncpo1 = 0x0c80;
-		break;
-	case PHY_INTERFACE_MODE_TRGMII:
-		trgint = 1;
+	if (xtal == HWTRAP_XTAL_25MHZ)
+		ssc_delta = 0x57;
+	else
+		ssc_delta = 0x87;
+
+	ncpo1 = 0x0c80;
+
+	if (mode == PHY_INTERFACE_MODE_TRGMII) {
 		if (priv->id == ID_MT7621) {
 			/* PLL frequency: 150MHz: 1.2GBit */
 			if (xtal == HWTRAP_XTAL_40MHZ)
@@ -432,48 +412,30 @@ mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 			if (xtal == HWTRAP_XTAL_25MHZ)
 				ncpo1 = 0x1400;
 		}
-		break;
-	default:
-		dev_err(priv->dev, "xMII mode %d not supported\n", mode);
-		return -EINVAL;
 	}
 
-	if (xtal == HWTRAP_XTAL_25MHZ)
-		ssc_delta = 0x57;
-	else
-		ssc_delta = 0x87;
+	core_write(priv, CORE_PLL_GROUP5, ncpo1);
+	mdelay(1);
+	core_write(priv, CORE_PLL_GROUP6, 0);
+	core_write(priv, CORE_PLL_GROUP10, ssc_delta);
+	mdelay(1);
+	core_write(priv, CORE_PLL_GROUP11, ssc_delta);
 
-	mt7530_rmw(priv, MT7530_P6ECR, P6_INTF_MODE_MASK,
-		   P6_INTF_MODE(!trgint));
+	if (mode == PHY_INTERFACE_MODE_TRGMII) {
+		mt7530_trgmii_setting(priv);
+		p6ecr = P6_INTF_MODE_TRGMII;
+	} else {
+		mt7530_rgmii_setting(priv);
+		p6ecr = P6_INTF_MODE_RGMII;
+	}
 
-	/* Lower Tx Driving for TRGMII path */
-	for (i = 0 ; i < NUM_TRGMII_CTRL ; i++)
+	mt7530_rmw(priv, MT7530_P6ECR, P6_INTF_MODE_MASK, p6ecr);
+
+	/* Lower Tx Driving for (T)RGMII path */
+	for (i = 0 ; i < NUM_TRGMII_CTRL; i++)
 		mt7530_write(priv, MT7530_TRGMII_TD_ODT(i),
-			     TD_DM_DRVP(8) | TD_DM_DRVN(8));
+			     TD_DM_DRVP(4) | TD_DM_DRVN(4));
 
-
-	/* Setup the MT7530 TRGMII Tx Clock */
-	core_set(priv, CORE_TRGMII_GSW_CLK_CG, REG_GSWCK_EN);
-	core_write(priv, CORE_PLL_GROUP5, RG_LCDDS_PCW_NCPO1(ncpo1));
-	core_write(priv, CORE_PLL_GROUP6, RG_LCDDS_PCW_NCPO0(0));
-	core_write(priv, CORE_PLL_GROUP10, RG_LCDDS_SSC_DELTA(ssc_delta));
-	core_write(priv, CORE_PLL_GROUP11, RG_LCDDS_SSC_DELTA1(ssc_delta));
-	core_write(priv, CORE_PLL_GROUP4,
-		   RG_SYSPLL_DDSFBK_EN | RG_SYSPLL_BIAS_EN |
-		   RG_SYSPLL_BIAS_LPF_EN);
-	core_write(priv, CORE_PLL_GROUP2,
-		   RG_SYSPLL_EN_NORMAL | RG_SYSPLL_VODEN |
-		   RG_SYSPLL_POSDIV(1));
-	core_write(priv, CORE_PLL_GROUP7,
-		   RG_LCDDS_PCW_NCPO_CHG | RG_LCCDS_C(3) |
-		   RG_LCDDS_PWDB | RG_LCDDS_ISO_EN);
-	core_set(priv, CORE_TRGMII_GSW_CLK_CG,
-		 REG_GSWCK_EN | REG_TRGMIICK_EN);
-
-	if (!trgint)
-		for (i = 0 ; i < NUM_TRGMII_CTRL; i++)
-			mt7530_rmw(priv, MT7530_TRGMII_RD(i),
-				   RD_TAP_MASK, RD_TAP(16));
 	return 0;
 }
 
