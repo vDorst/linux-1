@@ -162,12 +162,6 @@ core_set(struct mt7530_priv *priv, u32 reg, u32 val)
 	core_rmw(priv, reg, 0, val);
 }
 
-static void
-core_clear(struct mt7530_priv *priv, u32 reg, u32 val)
-{
-	core_rmw(priv, reg, val, 0);
-}
-
 static int
 mt7530_mii_write(struct mt7530_priv *priv, u32 reg, u32 val)
 {
@@ -380,11 +374,42 @@ mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 
 	xtal = mt7530_read(priv, MT7530_MHWTRAP) & HWTRAP_XTAL_MASK;
 
-	if (xtal == HWTRAP_XTAL_20MHZ) {
+	/* Setup core clock for MT7530 */
+	switch (xtal) {
+	case HWTRAP_XTAL_40MHZ:
+		/* Disable MT7530 core clock */
+		core_write(priv, CORE_TRGMII_GSW_CLK_CG, 0);
+
+		/* Disable PLL */
+		core_write(priv, CORE_GSWPLL_GRP1,
+			   RG_GSWPLL_POSDIV_200M(2) |
+			   RG_GSWPLL_FBKDIV_200M(32));
+
+		/* Set core clock into 500Mhz */
+		core_write(priv, CORE_GSWPLL_GRP2,
+			   RG_GSWPLL_POSDIV_500M(1) |
+			   RG_GSWPLL_FBKDIV_500M(25));
+
+		/* Enable PLL */
+		core_write(priv, CORE_GSWPLL_GRP1,
+			   RG_GSWPLL_POSDIV_200M(2) |
+			   RG_GSWPLL_FBKDIV_200M(32) |
+			   RG_GSWPLL_EN_PRE);
+
+		usleep_range(20, 40);
+
+		/* Enable MT7530 core clock */
+		core_write(priv, CORE_TRGMII_GSW_CLK_CG, REG_GSWCK_EN);
+		break;
+	case HWTRAP_XTAL_20MHZ:
 		dev_err(priv->dev,
 			"%s: MT7530 with a 20MHz XTAL is not supported!\n",
 			__func__);
 		return -EINVAL;
+	case HWTRAP_XTAL_25MHZ:
+	default:
+		/* TODO: PLL settings for 20/25MHz */
+		break;
 	}
 
 	switch (mode) {
@@ -426,35 +451,6 @@ mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 		mt7530_write(priv, MT7530_TRGMII_TD_ODT(i),
 			     TD_DM_DRVP(8) | TD_DM_DRVN(8));
 
-	/* Setup core clock for MT7530 */
-	if (!trgint) {
-		/* Disable MT7530 core clock */
-		core_clear(priv, CORE_TRGMII_GSW_CLK_CG, REG_GSWCK_EN);
-
-		/* Disable PLL, since phy_device has not yet been created
-		 * provided for phy_[read,write]_mmd_indirect is called, we
-		 * provide our own core_write_mmd_indirect to complete this
-		 * function.
-		 */
-		core_write_mmd_indirect(priv,
-					CORE_GSWPLL_GRP1,
-					MDIO_MMD_VEND2,
-					0);
-
-		/* Set core clock into 500Mhz */
-		core_write(priv, CORE_GSWPLL_GRP2,
-			   RG_GSWPLL_POSDIV_500M(1) |
-			   RG_GSWPLL_FBKDIV_500M(25));
-
-		/* Enable PLL */
-		core_write(priv, CORE_GSWPLL_GRP1,
-			   RG_GSWPLL_EN_PRE |
-			   RG_GSWPLL_POSDIV_200M(2) |
-			   RG_GSWPLL_FBKDIV_200M(32));
-
-		/* Enable MT7530 core clock */
-		core_set(priv, CORE_TRGMII_GSW_CLK_CG, REG_GSWCK_EN);
-	}
 
 	/* Setup the MT7530 TRGMII Tx Clock */
 	core_set(priv, CORE_TRGMII_GSW_CLK_CG, REG_GSWCK_EN);
