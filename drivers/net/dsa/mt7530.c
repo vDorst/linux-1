@@ -67,6 +67,37 @@ static const struct mt7530_mib_desc mt7530_mib[] = {
 };
 
 static int
+core_read_mmd_indirect(struct mt7530_priv *priv, int prtad, int devad)
+{
+	struct mii_bus *bus = priv->bus;
+	int value, ret;
+
+	/* Write the desired MMD Devad */
+	ret = bus->write(bus, 0, MII_MMD_CTRL, devad);
+	if (ret < 0)
+		goto err;
+
+	/* Write the desired MMD register address */
+	ret = bus->write(bus, 0, MII_MMD_DATA, prtad);
+	if (ret < 0)
+		goto err;
+
+	/* Select the Function : DATA with no post increment */
+	ret = bus->write(bus, 0, MII_MMD_CTRL, (devad | MII_MMD_CTRL_NOINCR));
+	if (ret < 0)
+		goto err;
+
+	/* Read the content of the MMD's selected register */
+	value = bus->read(bus, 0, MII_MMD_DATA);
+
+	return value;
+err:
+	dev_err(&bus->dev,  "failed to read mmd register\n");
+
+	return ret;
+}
+
+static int
 core_write_mmd_indirect(struct mt7530_priv *priv, int prtad,
 			int devad, u32 data)
 {
@@ -107,6 +138,21 @@ core_write(struct mt7530_priv *priv, u32 reg, u32 val)
 	core_write_mmd_indirect(priv, reg, MDIO_MMD_VEND2, val);
 
 	mutex_unlock(&bus->mdio_lock);
+}
+
+static u32
+core_read(struct mt7530_priv *priv, u32 reg)
+{
+	struct mii_bus *bus = priv->bus;
+	u32 val;
+
+	mutex_lock_nested(&bus->mdio_lock, MDIO_MUTEX_NESTED);
+
+	val = core_read_mmd_indirect(priv, reg, MDIO_MMD_VEND2);
+
+	mutex_unlock(&bus->mdio_lock);
+
+	return val;
 }
 
 static int
@@ -311,6 +357,50 @@ mt7530_fdb_write(struct mt7530_priv *priv, u16 vid,
 	/* Write array into the ARL table */
 	for (i = 0; i < 3; i++)
 		mt7530_write(priv, MT7530_ATA1 + (i * 4), reg[i]);
+}
+
+void mt7530_debug_print(struct mt7530_priv *priv)
+{
+	static const struct {
+		u32 reg;
+		const char *name;
+	} regs[] = {
+		{MT7530_MHWTRAP, 		"HWTRAP"},
+		{MT7530_P6ECR,			"P6ECR"},
+		{MT7530_TRGMII_TXCTRL,		"TXCTRL"},
+		{MT7530_TRGMII_TCK_CTRL,	"TCK_CTRL"},
+		{MT7530_TRGMII_TD_ODT(0),	"TD_ODT(0)"},
+		{MT7530_TRGMII_RD(0),		"RD(0)"},
+	};
+
+	static const struct {
+		u32 reg;
+		const char *name;
+	} coreregs[] = {
+		{CORE_PLL_GROUP2,		"PLL_GROUP2"},
+		{CORE_PLL_GROUP4,		"PLL_GROUP4"},
+		{CORE_PLL_GROUP5,		"PLL_GROUP5"},
+		{CORE_PLL_GROUP6,		"PLL_GROUP6"},
+		{CORE_PLL_GROUP7,		"PLL_GROUP7"},
+		{CORE_PLL_GROUP10,		"PLL_GROUP10"},
+		{CORE_PLL_GROUP11,		"PLL_GROUP11"},
+		{CORE_GSWPLL_GRP1,		"GSWPLL_GRP1"},
+		{CORE_GSWPLL_GRP2,		"GSWPLL_GRP2"},
+		{CORE_TRGMII_GSW_CLK_CG,	"GSW_CLK_CG"},
+	};
+
+	u32 i, val;
+
+	pr_info("___RegisterName[ADDR]: HEXvalue\n");
+	for (i = 0; i < ARRAY_SIZE(regs); i++) {
+		val = mt7530_read(priv, regs[i].reg);
+		pr_info("%15s[%4x]: %8x\n", regs[i].name, regs[i].reg, val);
+	}
+
+	for (i = 0; i < ARRAY_SIZE(coreregs); i++) {
+		val = core_read(priv, coreregs[i].reg);
+		pr_info("%15s[%4x]: %8x\n", coreregs[i].name, coreregs[i].reg, val);
+	}
 }
 
 static void mt7530_trgmii_setting(struct mt7530_priv *priv)
@@ -1310,7 +1400,9 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 		dev_err(ds->dev, "%s: Setup P%i mode: %s\n", __func__, port, phy_modes(state->interface));
 
 		/* Setup TX circuit incluing relevant PAD and driving */
+		mt7530_debug_print(priv);
 		mt7530_pad_clk_setup(ds, state->interface);
+		mt7530_debug_print(priv);
 
 		priv->p6_interface = state->interface;
 		break;
@@ -1582,6 +1674,8 @@ mt7530_probe(struct mdio_device *mdiodev)
 	priv->ds->ops = &mt7530_switch_ops;
 	mutex_init(&priv->reg_mutex);
 	dev_set_drvdata(&mdiodev->dev, priv);
+
+	mt7530_debug_print(priv);
 
 	return dsa_register_switch(priv->ds);
 }
