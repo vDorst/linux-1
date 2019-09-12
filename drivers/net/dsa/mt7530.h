@@ -265,6 +265,8 @@ enum mt7530_vlan_port_attr {
 #define MT7530_P6ECR			0x7830
 #define  P6_INTF_MODE_MASK		0x3
 #define  P6_INTF_MODE(x)		((x) & 0x3)
+#define  P6_INTF_MODE_TRGMII		BIT(0)
+#define  P6_INTF_MODE_RGMII		BIT(1)
 
 /* Registers for TRGMII on the both side */
 #define MT7530_TRGMII_RCK_CTRL		0x7a00
