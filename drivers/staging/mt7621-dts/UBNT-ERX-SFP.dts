@@ -7,17 +7,6 @@
 	model = "UBNT-ERX-SFP";
 	compatible = "ubiquiti,edgerouterx-sfp", "mediatek,mt7621-soc";
 
-	leds {
-		compatible = "gpio-leds";
-
-		/* Fixme: Currently a hack to enable SFP clk gate. */
-		sfp {
-			label = "sfp:i2c";
-			gpios = <&gpio 7 GPIO_ACTIVE_LOW>;
-			default-state = "off";
-			linux,default-trigger = "default-on";
-		};
-	};
 
 	gpio_expander_export {
 		compatible = "gpio-export";
@@ -59,6 +48,14 @@
 		i2c-bus = <&i2c>;
 		mod-def0-gpio = <&expander0 5 GPIO_ACTIVE_LOW>;
 		maximum-power-milliwatt = <1000>;
+	};
+};
+
+&gpio {
+	sfp_i2c_clk_gate {
+		gpio-hog;
+		gpios = <7 GPIO_ACTIVE_LOW>;
+		output-high;
 	};
 };
 
