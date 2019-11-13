@@ -405,6 +405,14 @@ config MTD_NAND_MXIC
 	help
 	  This selects the Macronix raw NAND controller driver.
 
+config MTD_NAND_MTK_MT7621
+	tristate "Support for NAND controller on MTK 7621 SoC"
+	depends on (ARCH_MEDIATEK || SOC_MT7621) || COMPILE_TEST
+	depends on HAS_IOMEM
+	help
+	  Enables support for NAND controller on MTK SoCs.
+	  This controller is found on mt27xx, mt81xx, mt65xx SoCs.
+
 config MTD_NAND_TEGRA
 	tristate "NVIDIA Tegra NAND controller"
 	depends on ARCH_TEGRA || COMPILE_TEST
