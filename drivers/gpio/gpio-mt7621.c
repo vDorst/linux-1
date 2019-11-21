@@ -227,8 +227,12 @@ mediatek_gpio_bank_probe(struct device *dev,
 	ctrl = mtk->base + GPIO_REG_DCLR + (rg->bank * GPIO_BANK_STRIDE);
 	diro = mtk->base + GPIO_REG_CTRL + (rg->bank * GPIO_BANK_STRIDE);
 
+	/* mt7621 soc have set and clear register, but duo a unknown bug the
+	 * set and clear writes are not working.
+	 * So currently disable the use of the set/clear register feature.
+	 */
 	ret = bgpio_init(&rg->chip, dev, 4,
-			 dat, set, ctrl, diro, NULL, 0);
+			 dat, NULL, NULL, diro, NULL, 0);
 	if (ret) {
 		dev_err(dev, "bgpio_init() failed\n");
 		return ret;
