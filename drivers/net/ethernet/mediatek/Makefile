@@ -4,4 +4,5 @@
 #
 
 obj-$(CONFIG_NET_MEDIATEK_SOC)                 += mtk_eth.o
-mtk_eth-y := mtk_eth_soc.o mtk_sgmii.o mtk_eth_path.o
+mtk_eth-objs:=  mtk_eth_soc.o mtk_sgmii.o mtk_eth_path.o $(mtk_eth-y)
+mtk_eth-$(CONFIG_MEDIATEK_SOC_SELFTESTS) += mtk_eth_soc_selftest.o

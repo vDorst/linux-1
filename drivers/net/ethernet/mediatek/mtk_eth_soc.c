@@ -218,15 +218,14 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 	int val, ge_mode, err;
 
 	/* MT76x8 has no hardware settings between for the MAC */
-	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628) &&
+	if (!MTK_HAS_CAPS(mac->caps, MTK_SOC_MT7628) &&
 	    mac->interface != state->interface) {
 		/* Setup soc pin functions */
 		switch (state->interface) {
 		case PHY_INTERFACE_MODE_TRGMII:
 			if (mac->id)
 				goto err_phy;
-			if (!MTK_HAS_CAPS(mac->hw->soc->caps,
-					  MTK_GMAC1_TRGMII))
+			if (!MTK_HAS_CAPS(mac->caps, MTK_GMAC1_TRGMII))
 				goto err_phy;
 			/* fall through */
 		case PHY_INTERFACE_MODE_RGMII_TXID:
@@ -236,7 +235,7 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		case PHY_INTERFACE_MODE_MII:
 		case PHY_INTERFACE_MODE_REVMII:
 		case PHY_INTERFACE_MODE_RMII:
-			if (MTK_HAS_CAPS(eth->soc->caps, MTK_RGMII)) {
+			if (MTK_HAS_CAPS(mac->caps, MTK_RGMII)) {
 				err = mtk_gmac_rgmii_path_setup(eth, mac->id);
 				if (err)
 					goto init_err;
@@ -245,14 +244,14 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		case PHY_INTERFACE_MODE_1000BASEX:
 		case PHY_INTERFACE_MODE_2500BASEX:
 		case PHY_INTERFACE_MODE_SGMII:
-			if (MTK_HAS_CAPS(eth->soc->caps, MTK_SGMII)) {
+			if (MTK_HAS_CAPS(mac->caps, MTK_SGMII)) {
 				err = mtk_gmac_sgmii_path_setup(eth, mac->id);
 				if (err)
 					goto init_err;
 			}
 			break;
 		case PHY_INTERFACE_MODE_GMII:
-			if (MTK_HAS_CAPS(eth->soc->caps, MTK_GEPHY)) {
+			if (MTK_HAS_CAPS(mac->caps, MTK_GEPHY)) {
 				err = mtk_gmac_gephy_path_setup(eth, mac->id);
 				if (err)
 					goto init_err;
@@ -265,9 +264,8 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		/* Setup clock for 1st gmac */
 		if (!mac->id && state->interface != PHY_INTERFACE_MODE_SGMII &&
 		    !phy_interface_mode_is_8023z(state->interface) &&
-		    MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII)) {
-			if (MTK_HAS_CAPS(mac->hw->soc->caps,
-					 MTK_TRGMII_MT7621_CLK)) {
+		    MTK_HAS_CAPS(mac->caps, MTK_GMAC1_TRGMII)) {
+			if (MTK_HAS_CAPS(mac->caps, MTK_TRGMII_MT7621_CLK)) {
 				if (mt7621_gmac0_rgmii_adjust(mac->hw,
 							      state->interface))
 					goto err_phy;
@@ -981,7 +979,7 @@ static int mtk_tx_map(struct sk_buff *skb, struct net_device *dev,
 			unsigned int frag_map_size;
 			bool new_desc = true;
 
-			if (MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA) ||
+			if (MTK_HAS_CAPS(mac->caps, MTK_QDMA) ||
 			    (i & 0x1)) {
 				txd = mtk_qdma_phys_to_virt(ring, txd->txd2);
 				txd_pdma = qdma_to_pdma(ring, txd);
@@ -1033,7 +1031,7 @@ static int mtk_tx_map(struct sk_buff *skb, struct net_device *dev,
 	WRITE_ONCE(itxd->txd4, txd4);
 	WRITE_ONCE(itxd->txd3, (TX_DMA_SWC | TX_DMA_PLEN0(skb_headlen(skb)) |
 				(!nr_frags * TX_DMA_LS0)));
-	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA)) {
+	if (!MTK_HAS_CAPS(mac->caps, MTK_QDMA)) {
 		if (k & 0x1)
 			txd_pdma->txd2 |= TX_DMA_LS0;
 		else
@@ -1051,7 +1049,7 @@ static int mtk_tx_map(struct sk_buff *skb, struct net_device *dev,
 	 */
 	wmb();
 
-	if (MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA)) {
+	if (MTK_HAS_CAPS(mac->caps, MTK_QDMA)) {
 		if (netif_xmit_stopped(netdev_get_tx_queue(dev, 0)) ||
 		    !netdev_xmit_more())
 			mtk_w32(eth, txd->txd2, MTK_QTX_CTX_PTR);
@@ -1071,7 +1069,7 @@ err_dma:
 		mtk_tx_unmap(eth, tx_buf);
 
 		itxd->txd3 = TX_DMA_LS0 | TX_DMA_OWNER_CPU;
-		if (!MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA))
+		if (!MTK_HAS_CAPS(mac->caps, MTK_QDMA))
 			itxd_pdma->txd2 = TX_DMA_DESP2_DEF;
 
 		itxd = mtk_qdma_phys_to_virt(ring, itxd->txd2);
@@ -1272,11 +1270,13 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 			mac--;
 		}
 
+		netdev = eth->netdev[mac];
+
 		if (unlikely(mac < 0 || mac >= MTK_MAC_COUNT ||
-			     !eth->netdev[mac]))
+			     !netdev))
 			goto release_desc;
 
-		netdev = eth->netdev[mac];
+		
 
 		if (unlikely(test_bit(MTK_RESETTING, &eth->state)))
 			goto release_desc;
@@ -2672,6 +2672,9 @@ static void mtk_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 			data += ETH_GSTRING_LEN;
 		}
 		break;
+	case ETH_SS_TEST:
+		mtk_selftest_get_strings(dev, data);
+		break;
 	}
 }
 
@@ -2783,7 +2786,8 @@ static const struct ethtool_ops mtk_ethtool_ops = {
 	.get_sset_count		= mtk_get_sset_count,
 	.get_ethtool_stats	= mtk_get_ethtool_stats,
 	.get_rxnfc		= mtk_get_rxnfc,
-	.set_rxnfc              = mtk_set_rxnfc,
+	.set_rxnfc		= mtk_set_rxnfc,
+	.self_test		= mtk_selftest_run,
 };
 
 static const struct net_device_ops mtk_netdev_ops = {
@@ -2839,6 +2843,8 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	mac->id = id;
 	mac->hw = eth;
 	mac->of_node = np;
+	mac->netdev = eth->netdev[id];
+	mac->caps   = eth->soc->caps;
 
 	memset(mac->hwlro_ip, 0, sizeof(mac->hwlro_ip));
 	mac->hwlro_ip_cnt = 0;

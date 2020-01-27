@@ -14,4 +14,18 @@ config NET_MEDIATEK_SOC
 	  This driver supports the gigabit ethernet MACs in the
 	  MediaTek SoC family.
 
+if NET_MEDIATEK_SOC
+
+config MEDIATEK_SOC_SELFTESTS
+	bool "Support for MediaTek SoC Ethernet Selftests"
+	depends on INET
+	depends on NET_MEDIATEK_SOC
+	default n
+	---help---
+	  This adds support for MediaTek Selftests using ethtool. Enable this
+	  feature if you are facing problems with your HW and submit the test
+	  results to the netdev Mailing List.
+
+endif #MEDIATEK_SOC_SELFTESTS
+
 endif #NET_VENDOR_MEDIATEK

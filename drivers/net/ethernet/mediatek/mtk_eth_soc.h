@@ -906,6 +906,9 @@ struct mtk_eth {
  * @hw_stats:		Packet statistics counter
  */
 struct mtk_mac {
+	struct net_device		*netdev;
+	u32				caps;
+	struct mtk_eth			*hw;
 	int				id;
 	phy_interface_t			interface;
 	unsigned int			mode;
@@ -913,7 +916,6 @@ struct mtk_mac {
 	struct device_node		*of_node;
 	struct phylink			*phylink;
 	struct phylink_config		phylink_config;
-	struct mtk_eth			*hw;
 	struct mtk_hw_stats		*hw_stats;
 	__be32				hwlro_ip[MTK_MAX_LRO_IP_CNT];
 	int				hwlro_ip_cnt;
@@ -938,5 +940,26 @@ void mtk_sgmii_restart_an(struct mtk_eth *eth, int mac_id);
 int mtk_gmac_sgmii_path_setup(struct mtk_eth *eth, int mac_id);
 int mtk_gmac_gephy_path_setup(struct mtk_eth *eth, int mac_id);
 int mtk_gmac_rgmii_path_setup(struct mtk_eth *eth, int mac_id);
+
+#if IS_ENABLED(CONFIG_MEDIATEK_SOC_SELFTESTS)
+void mtk_selftest_run(struct net_device *dev, struct ethtool_test *etest,
+		      u64 *buf);
+void mtk_selftest_get_strings(struct net_device *dev, u8 *data);
+int mtk_selftest_get_count(struct net_device *dev);
+#else
+static inline void mtk_selftest_run(struct net_device *dev,
+				    struct ethtool_test *etest, u64 *buf)
+{
+	/* Not enabled */
+}
+static inline void mtk_selftest_get_strings(struct net_device *dev, u8 *data)
+{
+	/* Not enabled */
+}
+static inline int mtk_selftest_get_count(struct net_device *dev)
+{
+	return -EOPNOTSUPP;
+}
+#endif /* CONFIG_STMMAC_SELFTESTS */
 
 #endif /* MTK_ETH_H */
