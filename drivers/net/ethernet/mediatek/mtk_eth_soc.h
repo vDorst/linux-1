@@ -44,6 +44,8 @@
 #define NEXT_DESP_IDX(X, Y)	(((X) + 1) & ((Y) - 1))
 
 #define MTK_MAX_RX_RING_NUM	4
+#define MTK_PP_MAX_RX_RING_NUM	(MTK_MAX_RX_RING_NUM + 1)
+#define MTK_PP_QDMA_RX_RING	(MTK_MAX_RX_RING_NUM - 1)
 #define MTK_HW_LRO_DMA_SIZE	8
 
 #define	MTK_MAX_LRO_RX_LENGTH		(4096 * 3)
@@ -652,6 +654,7 @@ enum mtk_rx_flags {
  */
 struct mtk_rx_ring {
 	struct mtk_rx_dma *dma;
+	struct page_pool  *page_pool;
 	u8 **data;
 	dma_addr_t phys;
 	u16 frag_size;
@@ -660,6 +663,7 @@ struct mtk_rx_ring {
 	bool calc_idx_update;
 	u16 calc_idx;
 	u32 crx_idx_reg;
+	struct xdp_rxq_info xdp_rxq;
 };
 
 enum mkt_eth_capabilities {
@@ -877,7 +881,6 @@ struct mtk_eth {
 	refcount_t			dma_refcnt;
 	struct mtk_tx_ring		tx_ring;
 	struct mtk_rx_ring		rx_ring[MTK_MAX_RX_RING_NUM];
-	struct mtk_rx_ring		rx_ring_qdma;
 	struct napi_struct		tx_napi;
 	struct napi_struct		rx_napi;
 	struct mtk_tx_dma		*scratch_ring;
