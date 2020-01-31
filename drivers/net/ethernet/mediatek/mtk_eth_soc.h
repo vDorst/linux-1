@@ -16,6 +16,8 @@
 #include <linux/refcount.h>
 #include <linux/phylink.h>
 
+
+
 #define MTK_QDMA_PAGE_SIZE	2048
 #define	MTK_MAX_RX_LENGTH	1536
 #define MTK_TX_DMA_BUF_LEN	0x3fff
@@ -24,6 +26,12 @@
 #define MTK_MAC_COUNT		2
 #define MTK_RX_ETH_HLEN		(VLAN_ETH_HLEN + VLAN_HLEN + ETH_FCS_LEN)
 #define MTK_RX_HLEN		(NET_SKB_PAD + MTK_RX_ETH_HLEN + NET_IP_ALIGN)
+
+/* Page Pool */
+
+#define MTK_SBK_HEADROOM 	(MTK_RX_HLEN)
+#define MTK_PP_RX_OFFSET_CORRECTION (32)
+
 #define MTK_DMA_DUMMY_DESC	0xffffffff
 #define MTK_DEFAULT_MSG_ENABLE	(NETIF_MSG_DRV | \
 				 NETIF_MSG_PROBE | \
@@ -480,7 +488,7 @@
 #define MT7628_SDM_MAC_ADRH	(MT7628_SDM_OFFSET + 0x10)
 
 struct mtk_rx_dma {
-	unsigned int rxd1;
+	dma_addr_t   rxd1;
 	unsigned int rxd2;
 	unsigned int rxd3;
 	unsigned int rxd4;
@@ -646,7 +654,7 @@ enum mtk_rx_flags {
 
 /* struct mtk_rx_ring -	This struct holds info describing a RX ring
  * @dma:		The descriptor ring
- * @data:		The memory pointed at by the ring
+ * @page:		The memory/page pointed at by the ring
  * @phys:		The physical addr of rx_buf
  * @frag_size:		How big can each fragment be
  * @buf_size:		The size of each packet buffer
@@ -654,8 +662,8 @@ enum mtk_rx_flags {
  */
 struct mtk_rx_ring {
 	struct mtk_rx_dma *dma;
-	struct page_pool  *page_pool;
-	u8 **data;
+	struct page_pool *page_pool;
+	struct page **page;
 	dma_addr_t phys;
 	u16 frag_size;
 	u16 buf_size;
