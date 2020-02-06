@@ -20,6 +20,8 @@
 #include <linux/pinctrl/devinfo.h>
 #include <linux/phylink.h>
 #include <net/page_pool.h>
+#include <linux/bpf.h>
+#include <linux/bpf_trace.h>
 
 #include "mtk_eth_soc.h"
 
@@ -1234,36 +1236,74 @@ static void mtk_update_rx_cpu_idx(struct mtk_eth *eth)
 	}
 }
 
-static dma_addr_t mtk_page_pool_get_dma_addr(struct mtk_eth *eth,
-					     struct page *page)
+/* Refill processing for SW buffer management */
+/* Allocate page per descriptor */
+static void *mtk_alloc_rx_data(struct mtk_eth *eth, struct mtk_rx_ring *ring,
+			       dma_addr_t *dma_handle, u16 *desc_len)
 {
-	return page_pool_get_dma_addr(page) + NET_SKB_PAD + eth->ip_align;
+	enum dma_data_direction dma_dir;
+	struct page *page;
+
+	page = page_pool_dev_alloc_pages(ring->page_pool);
+
+	if (!page)
+		return NULL;
+
+	*dma_handle = page_pool_get_dma_addr(page) + eth->rx_headroom;
+	*desc_len = PAGE_SIZE - eth->rx_buf_non_data;
+
+	// dma_dir = page_pool_get_dma_dir(ring->page_pool);
+	// dma_sync_single_for_device(eth->dev, *dma_handle, *desc_len, dma_dir);
+
+	return page_address(page);
+}
+
+
+static void mtk_rx_fill(struct mtk_eth *eth, struct mtk_rx_ring *ring, int idx)
+{
+	struct mtk_desc *desc = &ring->desc[idx];
+
+	ring->dma[idx].rxd1 = desc->dma_addr;
+
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628))
+		ring->dma[idx].rxd2 = RX_DMA_LSO;
+	else
+		ring->dma[idx].rxd2 = RX_DMA_PLEN0(ring->buf_size);
+
+	// pr_info("%s: idx %d done\n", __func__, idx);
 }
 
 static int mtk_poll_rx(struct napi_struct *napi, int budget,
 		       struct mtk_eth *eth)
 {
+	struct mtk_rx_dma *rxd, trxd;
+	struct bpf_prog *xdp_prog;
 	struct mtk_rx_ring *ring;
 	struct sk_buff *skb;
-	struct page *page, *new_page;
-	struct mtk_rx_dma *rxd, trxd;
-	dma_addr_t page_addr;
 	int done = 0;
 	int idx;
 
+	xdp_prog = READ_ONCE(eth->xdp_prog);
+
 	while (done < budget) {
+		enum dma_data_direction dma_dir;
 		struct net_device *netdev;
-		unsigned int pktlen;
-		// dma_addr_t dma_addr;
+		struct mtk_desc *desc;
+		dma_addr_t dma_handle;
+		u16 desc_len, pktlen;
+		struct page *page;
+		void *buf_addr;
 		int mac;
 
-		ring = mtk_get_rx_ring(eth);
-		if (unlikely(!ring))
-			goto rx_done;
-
+		// ring = mtk_get_rx_ring(eth);
+		// if (unlikely(!ring))
+		//	goto rx_done;
+                ring = &eth->rx_ring[0];
 		idx = NEXT_DESP_IDX(ring->calc_idx, ring->dma_size);
 		rxd = &ring->dma[idx];
-		page = ring->page[idx];
+		desc = &ring->desc[idx];
+		page = virt_to_page(desc->addr);
+		// dma_dir = page_pool_get_dma_dir(ring->page_pool);
 
 		mtk_rx_get_desc(&trxd, rxd);
 		if (!(trxd.rxd2 & RX_DMA_DONE))
@@ -1288,29 +1328,36 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 			goto release_desc;
 
 		/* alloc new buffer */
-		new_page = page_pool_dev_alloc_pages(ring->page_pool);
-		if (unlikely(!new_page)) {
+		buf_addr = mtk_alloc_rx_data(eth, ring, &dma_handle, &desc_len);
+
+		if (unlikely(!buf_addr)) {
 			netdev->stats.rx_dropped++;
 			goto release_desc;
 		}
 
-		/* receive data */
-		page_addr = mtk_page_pool_get_dma_addr(eth, page);
-		skb = build_skb(&page_addr, ring->frag_size);
+		pktlen = RX_DMA_GET_PLEN0(trxd.rxd2);
+
+		//dma_sync_single_for_cpu(eth->dev, desc->dma_addr, pktlen,
+		//			dma_dir);
+
+		// prefetch(desc->addr);
+
+		skb = build_skb(desc->addr, desc->len + eth->rx_buf_non_data);
+
 		if (unlikely(!skb)) {
 			page_pool_recycle_direct(ring->page_pool, page);
-			skb_free_frag(&page_addr);
 			netdev->stats.rx_dropped++;
+			pr_info("rx failed to build skb\n");
 			goto release_desc;
 		}
 
 		page_pool_release_page(ring->page_pool, page);
 
-		skb_reserve(skb, NET_SKB_PAD + NET_IP_ALIGN);
+		skb_reserve(skb, eth->rx_headroom + NET_IP_ALIGN);
 
-		pktlen = RX_DMA_GET_PLEN0(trxd.rxd2);
 		skb->dev = netdev;
 		skb_put(skb, pktlen);
+
 		if (trxd.rxd4 & eth->rx_dma_l4_valid)
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
 		else
@@ -1321,18 +1368,17 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 		    RX_DMA_VID(trxd.rxd3))
 			__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q),
 					       RX_DMA_VID(trxd.rxd3));
-		skb_record_rx_queue(skb, 0);
+		skb_record_rx_queue(skb, idx);
 		napi_gro_receive(napi, skb);
 
-		ring->page[idx] = new_page;
-		rxd->rxd1 = mtk_page_pool_get_dma_addr(eth, new_page);
+		/* Update the descriptor with fresh buffers */
+		desc->len = desc_len;
+		desc->dma_addr = dma_handle;
+		desc->addr = buf_addr;
+
+		mtk_rx_fill(eth, ring, idx);
 
 release_desc:
-		if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628))
-			rxd->rxd2 = RX_DMA_LSO;
-		else
-			rxd->rxd2 = RX_DMA_PLEN0(ring->buf_size);
-
 		ring->calc_idx = idx;
 
 		done++;
@@ -1657,7 +1703,7 @@ static int mtk_create_page_pool(struct mtk_eth *eth, struct mtk_rx_ring *ring,
 		.nid = NUMA_NO_NODE,
 		.dev = eth->dev,
 		.dma_dir = xdp_prog ? DMA_BIDIRECTIONAL : DMA_FROM_DEVICE,
-		.offset = NET_SKB_PAD + eth->ip_align,
+		.offset = eth->rx_headroom,
 		.max_len = MTK_MAX_RX_LENGTH,
 	};
 	int err;
@@ -1669,59 +1715,36 @@ static int mtk_create_page_pool(struct mtk_eth *eth, struct mtk_rx_ring *ring,
 		return err;
 	}
 
-#if 0
-	err = xdp_rxq_info_reg(&ring->xdp_rxq, eth->dev, rxq->id);
+	pr_info("%s: page_pool_create done\n", __func__);
+
+	err = xdp_rxq_info_reg(&ring->xdp_rxq, &eth->dummy_dev, 0);
 	if (err < 0)
 		goto err_free_pp;
 
+	pr_info("%s: xdp_rxq_info_reg done\n", __func__);
+
 	err = xdp_rxq_info_reg_mem_model(&ring->xdp_rxq, MEM_TYPE_PAGE_POOL,
-					 rxq->page_pool);
+					 ring->page_pool);
 	if (err)
 		goto err_unregister_rxq;
-#endif
+
+	pr_info("%s: xdp_rxq_info_reg_mem_model done\n", __func__);
+
 	return 0;
 
-#if 0
 err_unregister_rxq:
 	xdp_rxq_info_unreg(&ring->xdp_rxq);
 err_free_pp:
 	page_pool_destroy(ring->page_pool);
 	ring->page_pool = NULL;
 	return err;
-#endif
-}
-
-/* Refill processing for SW buffer management */
-/* Allocate page per descriptor */
-static int mtk_alloc_rx_data(struct mtk_eth *eth, struct mtk_rx_ring *ring,
-			     int idx)
-{
-	dma_addr_t dma_addr;
-	struct page *page;
-
-	page = page_pool_dev_alloc_pages(ring->page_pool);
-
-	if (!page)
-		return -ENOMEM;
-
-	dma_addr = page_pool_get_dma_addr(page) + NET_SKB_PAD + eth->ip_align;
-
-	ring->dma[idx].rxd1 = dma_addr;
-	ring->page[idx] = page;
-
-	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628))
-		ring->dma[idx].rxd2 = RX_DMA_LSO;
-	else
-		ring->dma[idx].rxd2 = RX_DMA_PLEN0(ring->buf_size);
-
-	return 0;
 }
 
 static int mtk_rx_alloc(struct mtk_eth *eth, int ring_no, int rx_flag)
 {
 	int rx_data_len, rx_dma_size;
 	struct mtk_rx_ring *ring;
-	u32 offset = 0, rxd2;
+	u32 offset = 0;
 	// dma_addr_t phys_addr;
 	// struct page *page;
 	int i, err;
@@ -1736,6 +1759,8 @@ static int mtk_rx_alloc(struct mtk_eth *eth, int ring_no, int rx_flag)
 		rx_dma_size = MTK_DMA_SIZE;
 	}
 
+	pr_info("%s: for r#: %d len %d dma %d\n", __func__, ring_no, rx_data_len, rx_dma_size);
+
 	/* create page pool */
 	err = mtk_create_page_pool(eth, ring, rx_dma_size);
 	if (err) {
@@ -1744,9 +1769,11 @@ static int mtk_rx_alloc(struct mtk_eth *eth, int ring_no, int rx_flag)
 	}
 
 	/* create ptr ring to data blocks */
-	ring->page = kcalloc(rx_dma_size, sizeof(*ring->page), GFP_KERNEL);
-	if (!ring->page)
+	ring->desc = kcalloc(rx_dma_size, sizeof(*ring->desc), GFP_KERNEL);
+	if (!ring->desc)
 		goto no_data_ring;
+
+	pr_info("%s: kcalloc ring->desc done %d\n", __func__, sizeof(*ring->desc));
 
 	/* alloc dma rx descriptor ring */
 	ring->dma = dma_alloc_coherent(eth->dev,
@@ -1755,20 +1782,34 @@ static int mtk_rx_alloc(struct mtk_eth *eth, int ring_no, int rx_flag)
 	if (!ring->dma)
 		goto no_dma_ring;
 
+	pr_info("%s: kcalloc ring->dma done\n", __func__);
+
 	ring->frag_size = mtk_max_frag_size(rx_data_len);
 	ring->buf_size = mtk_max_buf_size(ring->frag_size);
 
-	/* fill-in dma desciptors */
-	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628))
-		rxd2 = RX_DMA_LSO;
-	else
-		rxd2 = RX_DMA_PLEN0(ring->buf_size);
-
 	/* alloc net pages */
 	for (i = 0; i < rx_dma_size; i++) {
-		err = mtk_alloc_rx_data(eth, ring, i);
-		if (!err)
+		struct mtk_desc *desc = &ring->desc[i];
+		dma_addr_t dma_handle;
+		void *buf;
+		u16 len;
+
+		buf = mtk_alloc_rx_data(eth, ring, &dma_handle, &len);
+		if (!buf) {
+			pr_info("%s: mtk_alloc_rx_data fail %d\n", __func__, err);
 			goto no_pp_pages;
+		}
+
+		desc->dma_addr = dma_handle;
+		desc->addr = buf;
+		desc->len = len;
+
+		mtk_rx_fill(eth, ring, i);
+	}
+
+	if (ring_no == MTK_PP_QDMA_RX_RING) {
+		ring_no = 0;
+		offset = 0x1000;
 	}
 
 	ring->dma_size = rx_dma_size;
@@ -1779,9 +1820,6 @@ static int mtk_rx_alloc(struct mtk_eth *eth, int ring_no, int rx_flag)
 	 * continue
 	 */
 	wmb();
-
-	if (ring_no == MTK_PP_QDMA_RX_RING)
-		offset = 0x1000;
 
 	mtk_w32(eth, ring->phys, MTK_PRX_BASE_PTR_CFG(ring_no) + offset);
 	mtk_w32(eth, rx_dma_size, MTK_PRX_MAX_CNT_CFG(ring_no) + offset);
@@ -1795,7 +1833,7 @@ no_pp_pages:
 			  ring->phys);
 	ring->dma = NULL;
 no_dma_ring:
-	kfree(ring->page);
+	kfree(ring->desc);
 no_data_ring:
 	page_pool_destroy(ring->page_pool);
 	return -ENOMEM;
@@ -1803,20 +1841,18 @@ no_data_ring:
 
 static void mtk_rx_clean(struct mtk_eth *eth, struct mtk_rx_ring *ring)
 {
-	dma_addr_t page_addr;
 	int i;
 
-	if (ring->page && ring->dma) {
+	if (ring->desc && ring->dma) {
 		for (i = 0; i < ring->dma_size; i++) {
-			if (!ring->page[i])
+			if (!ring->desc)
 				continue;
 			if (!ring->dma[i].rxd1)
 				continue;
-			page_addr = mtk_page_pool_get_dma_addr(eth, ring->page[i]);
-			skb_free_frag(&page_addr);
+			skb_free_frag(ring->desc[i].addr);
 		}
-		kfree(ring->page);
-		ring->page = NULL;
+		kfree(ring->desc);
+		ring->desc = NULL;
 	}
 
 	if (ring->dma) {
@@ -3016,12 +3052,16 @@ static int mtk_probe(struct platform_device *pdev)
 		eth->tx_int_status_reg = MTK_PDMA_INT_STATUS;
 	}
 
+	eth->rx_headroom = max(XDP_PACKET_HEADROOM, NET_SKB_PAD);
+
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628)) {
 		eth->rx_dma_l4_valid = RX_DMA_L4_VALID_PDMA;
-		eth->ip_align = NET_IP_ALIGN;
+		eth->rx_headroom += NET_IP_ALIGN;
 	} else {
 		eth->rx_dma_l4_valid = RX_DMA_L4_VALID;
 	}
+
+	eth->rx_buf_non_data = eth->rx_headroom + SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
 
 	spin_lock_init(&eth->page_lock);
 	spin_lock_init(&eth->tx_irq_lock);

@@ -16,8 +16,6 @@
 #include <linux/refcount.h>
 #include <linux/phylink.h>
 
-
-
 #define MTK_QDMA_PAGE_SIZE	2048
 #define	MTK_MAX_RX_LENGTH	1536
 #define MTK_TX_DMA_BUF_LEN	0x3fff
@@ -27,11 +25,11 @@
 #define MTK_RX_ETH_HLEN		(VLAN_ETH_HLEN + VLAN_HLEN + ETH_FCS_LEN)
 #define MTK_RX_HLEN		(NET_SKB_PAD + MTK_RX_ETH_HLEN + NET_IP_ALIGN)
 
+#define MTK_RXBUF_HEADROOM	(max(XDP_PACKET_HEADROOM, NET_SKB_PAD))
+#define MTK_RX_BUF_NON_DATA	(MTK_RXBUF_HEADROOM + \
+				SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
+
 /* Page Pool */
-
-#define MTK_SBK_HEADROOM 	(MTK_RX_HLEN)
-#define MTK_PP_RX_OFFSET_CORRECTION (32)
-
 #define MTK_DMA_DUMMY_DESC	0xffffffff
 #define MTK_DEFAULT_MSG_ENABLE	(NETIF_MSG_DRV | \
 				 NETIF_MSG_PROBE | \
@@ -53,7 +51,7 @@
 
 #define MTK_MAX_RX_RING_NUM	4
 #define MTK_PP_MAX_RX_RING_NUM	(MTK_MAX_RX_RING_NUM + 1)
-#define MTK_PP_QDMA_RX_RING	(MTK_MAX_RX_RING_NUM - 1)
+#define MTK_PP_QDMA_RX_RING	(MTK_PP_MAX_RX_RING_NUM - 1)
 #define MTK_HW_LRO_DMA_SIZE	8
 
 #define	MTK_MAX_LRO_RX_LENGTH		(4096 * 3)
@@ -652,6 +650,16 @@ enum mtk_rx_flags {
 	MTK_RX_FLAGS_QDMA,
 };
 
+struct mtk_desc {
+	union {
+		struct sk_buff *skb;
+		struct xdp_frame *xdpf;
+	};
+	dma_addr_t dma_addr;
+	void *addr;
+	u16 len;
+};
+
 /* struct mtk_rx_ring -	This struct holds info describing a RX ring
  * @dma:		The descriptor ring
  * @page:		The memory/page pointed at by the ring
@@ -663,7 +671,7 @@ enum mtk_rx_flags {
 struct mtk_rx_ring {
 	struct mtk_rx_dma *dma;
 	struct page_pool *page_pool;
-	struct page **page;
+	struct mtk_desc *desc;
 	dma_addr_t phys;
 	u16 frag_size;
 	u16 buf_size;
@@ -887,11 +895,12 @@ struct mtk_eth {
 	struct regmap			*pctl;
 	bool				hwlro;
 	refcount_t			dma_refcnt;
+	struct mtk_rx_ring		rx_ring[MTK_PP_MAX_RX_RING_NUM];
 	struct mtk_tx_ring		tx_ring;
-	struct mtk_rx_ring		rx_ring[MTK_MAX_RX_RING_NUM];
 	struct napi_struct		tx_napi;
 	struct napi_struct		rx_napi;
 	struct mtk_tx_dma		*scratch_ring;
+	struct bpf_prog			*xdp_prog;
 	dma_addr_t			phy_scratch_ring;
 	void				*scratch_head;
 	struct clk			*clks[MTK_CLK_MAX];
@@ -905,7 +914,9 @@ struct mtk_eth {
 	u32				tx_int_mask_reg;
 	u32				tx_int_status_reg;
 	u32				rx_dma_l4_valid;
-	int				ip_align;
+	int				rx_headroom;
+	int				rx_buf_non_data;
+
 };
 
 /* struct mtk_mac -	the structure that holds the info about the MACs of the
