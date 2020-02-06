@@ -1286,7 +1286,6 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 	xdp_prog = READ_ONCE(eth->xdp_prog);
 
 	while (done < budget) {
-		enum dma_data_direction dma_dir;
 		struct net_device *netdev;
 		struct mtk_desc *desc;
 		dma_addr_t dma_handle;
@@ -1303,7 +1302,6 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 		rxd = &ring->dma[idx];
 		desc = &ring->desc[idx];
 		page = virt_to_page(desc->addr);
-		// dma_dir = page_pool_get_dma_dir(ring->page_pool);
 
 		mtk_rx_get_desc(&trxd, rxd);
 		if (!(trxd.rxd2 & RX_DMA_DONE))
@@ -1337,11 +1335,6 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 
 		pktlen = RX_DMA_GET_PLEN0(trxd.rxd2);
 
-		//dma_sync_single_for_cpu(eth->dev, desc->dma_addr, pktlen,
-		//			dma_dir);
-
-		// prefetch(desc->addr);
-
 		skb = build_skb(desc->addr, desc->len + eth->rx_buf_non_data);
 
 		if (unlikely(!skb)) {
@@ -1353,7 +1346,7 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 
 		page_pool_release_page(ring->page_pool, page);
 
-		skb_reserve(skb, eth->rx_headroom + NET_IP_ALIGN);
+		skb_reserve(skb, eth->rx_headroom);
 
 		skb->dev = netdev;
 		skb_put(skb, pktlen);
@@ -1368,7 +1361,7 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 		    RX_DMA_VID(trxd.rxd3))
 			__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q),
 					       RX_DMA_VID(trxd.rxd3));
-		skb_record_rx_queue(skb, idx);
+		skb_record_rx_queue(skb, 0);
 		napi_gro_receive(napi, skb);
 
 		/* Update the descriptor with fresh buffers */
@@ -3059,6 +3052,7 @@ static int mtk_probe(struct platform_device *pdev)
 		eth->rx_headroom += NET_IP_ALIGN;
 	} else {
 		eth->rx_dma_l4_valid = RX_DMA_L4_VALID;
+		eth->rx_headroom += NET_IP_ALIGN;
 	}
 
 	eth->rx_buf_non_data = eth->rx_headroom + SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
