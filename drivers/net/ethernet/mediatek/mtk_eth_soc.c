@@ -1202,7 +1202,7 @@ static struct mtk_rx_ring *mtk_get_rx_ring(struct mtk_eth *eth)
 	struct mtk_rx_ring *ring;
 	int idx;
 
-	if (!eth->hwlro)
+	if (!eth->flags.hwlro)
 		return &eth->rx_ring[0];
 
 	for (i = 0; i < MTK_MAX_RX_RING_NUM; i++) {
@@ -1222,7 +1222,7 @@ static void mtk_update_rx_cpu_idx(struct mtk_eth *eth)
 	struct mtk_rx_ring *ring;
 	int i;
 
-	if (!eth->hwlro) {
+	if (!eth->flags.hwlro) {
 		ring = &eth->rx_ring[0];
 		mtk_w32(eth, ring->calc_idx, ring->crx_idx_reg);
 	} else {
@@ -1236,49 +1236,15 @@ static void mtk_update_rx_cpu_idx(struct mtk_eth *eth)
 	}
 }
 
-/* Refill processing for SW buffer management */
-/* Allocate page per descriptor */
-static void *mtk_alloc_rx_data(struct mtk_eth *eth, struct mtk_rx_ring *ring,
-			       dma_addr_t *dma_handle, u16 *desc_len)
-{
-	enum dma_data_direction dma_dir;
-	struct page *page;
-
-	page = page_pool_dev_alloc_pages(ring->page_pool);
-
-	if (!page)
-		return NULL;
-
-	*dma_handle = page_pool_get_dma_addr(page) + eth->rx_headroom;
-	*desc_len = PAGE_SIZE - eth->rx_buf_non_data;
-
-	// dma_dir = page_pool_get_dma_dir(ring->page_pool);
-	// dma_sync_single_for_device(eth->dev, *dma_handle, *desc_len, dma_dir);
-
-	return page_address(page);
-}
-
-
-static void mtk_rx_fill(struct mtk_eth *eth, struct mtk_rx_ring *ring, int idx)
-{
-	struct mtk_desc *desc = &ring->desc[idx];
-
-	ring->dma[idx].rxd1 = desc->dma_addr;
-
-	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628))
-		ring->dma[idx].rxd2 = RX_DMA_LSO;
-	else
-		ring->dma[idx].rxd2 = RX_DMA_PLEN0(ring->buf_size);
-
-	// pr_info("%s: idx %d done\n", __func__, idx);
-}
-
 static int mtk_poll_rx(struct napi_struct *napi, int budget,
 		       struct mtk_eth *eth)
 {
 	struct mtk_rx_dma *rxd, trxd;
+	struct page *page, *newpage;
+	struct net_device *netdev;
 	struct bpf_prog *xdp_prog;
 	struct mtk_rx_ring *ring;
+	struct page_pool *pool;
 	struct sk_buff *skb;
 	int done = 0;
 	int idx;
@@ -1286,29 +1252,25 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 	xdp_prog = READ_ONCE(eth->xdp_prog);
 
 	while (done < budget) {
-		struct net_device *netdev;
-		struct mtk_desc *desc;
-		dma_addr_t dma_handle;
-		u16 desc_len, pktlen;
-		struct page *page;
-		void *buf_addr;
+		u16 pktlen;
 		int mac;
 
-		// ring = mtk_get_rx_ring(eth);
-		// if (unlikely(!ring))
-		//	goto rx_done;
-                ring = &eth->rx_ring[0];
+		ring = mtk_get_rx_ring(eth);
+		if (unlikely(!ring))
+			goto rx_done;
+
 		idx = NEXT_DESP_IDX(ring->calc_idx, ring->dma_size);
 		rxd = &ring->dma[idx];
-		desc = &ring->desc[idx];
-		page = virt_to_page(desc->addr);
+		page = ring->data_pages[idx];
+
+		pool = ring->page_pool;
 
 		mtk_rx_get_desc(&trxd, rxd);
 		if (!(trxd.rxd2 & RX_DMA_DONE))
 			break;
 
 		/* find out which mac the packet come from. values start at 1 */
-		if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628)) {
+		if (eth->flags.mt7628) {
 			mac = 0;
 		} else {
 			mac = (trxd.rxd4 >> RX_DMA_FPORT_SHIFT) &
@@ -1319,42 +1281,40 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 		netdev = eth->netdev[mac];
 
 		if (unlikely(mac < 0 || mac >= MTK_MAC_COUNT ||
-			     !netdev))
+			     !netdev || test_bit(MTK_RESETTING, &eth->state))) {
+			newpage = page;
 			goto release_desc;
-
-		if (unlikely(test_bit(MTK_RESETTING, &eth->state)))
-			goto release_desc;
+		}
 
 		/* alloc new buffer */
-		buf_addr = mtk_alloc_rx_data(eth, ring, &dma_handle, &desc_len);
-
-		if (unlikely(!buf_addr)) {
+		newpage = page_pool_dev_alloc_pages(pool);
+		if (unlikely(!newpage)) {
 			netdev->stats.rx_dropped++;
+			newpage = page;
+			pr_info("rx failed to alloc page\n");
 			goto release_desc;
 		}
 
 		pktlen = RX_DMA_GET_PLEN0(trxd.rxd2);
 
-		skb = build_skb(desc->addr, desc->len + eth->rx_buf_non_data);
+		skb = build_skb(page_address(page),
+				pktlen + MTK_RXBUF_NON_DATA);
 
 		if (unlikely(!skb)) {
-			page_pool_recycle_direct(ring->page_pool, page);
 			netdev->stats.rx_dropped++;
+			page_pool_recycle_direct(pool, page);
 			pr_info("rx failed to build skb\n");
 			goto release_desc;
 		}
 
-		page_pool_release_page(ring->page_pool, page);
-
-		skb_reserve(skb, eth->rx_headroom);
-
-		skb->dev = netdev;
+		skb_reserve(skb, MTK_RXBUF_HEADROOM + NET_IP_ALIGN);
 		skb_put(skb, pktlen);
+		skb->dev = netdev;
 
-		if (trxd.rxd4 & eth->rx_dma_l4_valid)
+		skb_checksum_none_assert(skb);
+		if (trxd.rxd4 & ((!!eth->flags.checksum_bit) << (eth->flags.checksum_bit)))
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
-		else
-			skb_checksum_none_assert(skb);
+
 		skb->protocol = eth_type_trans(skb, netdev);
 
 		if (netdev->features & NETIF_F_HW_VLAN_CTAG_RX &&
@@ -1362,16 +1322,22 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 			__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q),
 					       RX_DMA_VID(trxd.rxd3));
 		skb_record_rx_queue(skb, 0);
+
+		page_pool_release_page(pool, page);
+
 		napi_gro_receive(napi, skb);
 
-		/* Update the descriptor with fresh buffers */
-		desc->len = desc_len;
-		desc->dma_addr = dma_handle;
-		desc->addr = buf_addr;
-
-		mtk_rx_fill(eth, ring, idx);
-
 release_desc:
+		/* Update the descriptor with a fresh buffer */
+		rxd->rxd1 = page_pool_get_dma_addr(newpage) + \
+				      MTK_RXBUF_HEADROOM;
+
+		if (!eth->flags.rx_sg_dma)
+			rxd->rxd2 = RX_DMA_LSO;
+		else
+			rxd->rxd2 = RX_DMA_PLEN0(ring->buf_size);
+		ring->data_pages[idx] = newpage;
+
 		ring->calc_idx = idx;
 
 		done++;
@@ -1485,10 +1451,10 @@ static int mtk_poll_tx(struct mtk_eth *eth, int budget)
 	memset(done, 0, sizeof(done));
 	memset(bytes, 0, sizeof(bytes));
 
-	if (MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA))
-		budget = mtk_poll_tx_qdma(eth, budget, done, bytes);
-	else
+	if (eth->flags.pdma_tx_ring)
 		budget = mtk_poll_tx_pdma(eth, budget, done, bytes);
+	else
+		budget = mtk_poll_tx_qdma(eth, budget, done, bytes);
 
 	for (i = 0; i < MTK_MAC_COUNT; i++) {
 		if (!eth->netdev[i] || !done[i])
@@ -1521,7 +1487,7 @@ static int mtk_napi_tx(struct napi_struct *napi, int budget)
 	u32 status, mask;
 	int tx_done = 0;
 
-	if (MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA))
+	if (!eth->flags.pdma_tx_ring)
 		mtk_handle_status_irq(eth);
 	mtk_w32(eth, MTK_TX_DONE_INT, eth->tx_int_status_reg);
 	tx_done = mtk_poll_tx(eth, budget);
@@ -1696,7 +1662,7 @@ static int mtk_create_page_pool(struct mtk_eth *eth, struct mtk_rx_ring *ring,
 		.nid = NUMA_NO_NODE,
 		.dev = eth->dev,
 		.dma_dir = xdp_prog ? DMA_BIDIRECTIONAL : DMA_FROM_DEVICE,
-		.offset = eth->rx_headroom,
+		.offset = MTK_RXBUF_HEADROOM,
 		.max_len = MTK_MAX_RX_LENGTH,
 	};
 	int err;
@@ -1762,11 +1728,12 @@ static int mtk_rx_alloc(struct mtk_eth *eth, int ring_no, int rx_flag)
 	}
 
 	/* create ptr ring to data blocks */
-	ring->desc = kcalloc(rx_dma_size, sizeof(*ring->desc), GFP_KERNEL);
-	if (!ring->desc)
+	ring->data_pages = kcalloc(rx_dma_size, sizeof(*ring->data_pages),
+				   GFP_KERNEL);
+	if (!ring->data_pages)
 		goto no_data_ring;
 
-	pr_info("%s: kcalloc ring->desc done %d\n", __func__, sizeof(*ring->desc));
+	pr_info("%s: kcalloc ring->data_pages done; s=%px\n", __func__, ring->data_pages);
 
 	/* alloc dma rx descriptor ring */
 	ring->dma = dma_alloc_coherent(eth->dev,
@@ -1782,22 +1749,27 @@ static int mtk_rx_alloc(struct mtk_eth *eth, int ring_no, int rx_flag)
 
 	/* alloc net pages */
 	for (i = 0; i < rx_dma_size; i++) {
-		struct mtk_desc *desc = &ring->desc[i];
-		dma_addr_t dma_handle;
-		void *buf;
-		u16 len;
+		struct page_pool *pool = ring->page_pool;
+		struct mtk_rx_dma *rxd = &ring->dma[i];
+		struct page *page;
 
-		buf = mtk_alloc_rx_data(eth, ring, &dma_handle, &len);
-		if (!buf) {
-			pr_info("%s: mtk_alloc_rx_data fail %d\n", __func__, err);
+		/* alloc new buffer */
+		page = page_pool_dev_alloc_pages(pool);
+		if (!page) {
+			pr_info("%s: alloc data_page fail %d\n", __func__, err);
 			goto no_pp_pages;
 		}
 
-		desc->dma_addr = dma_handle;
-		desc->addr = buf;
-		desc->len = len;
+		/* Update the descriptor with a fresh buffer */
+		rxd->rxd1 = page_pool_get_dma_addr(page) + \
+				      MTK_RXBUF_HEADROOM;
 
-		mtk_rx_fill(eth, ring, i);
+		if (!eth->flags.rx_sg_dma)
+			rxd->rxd2 = RX_DMA_LSO;
+		else
+			rxd->rxd2 = RX_DMA_PLEN0(ring->buf_size);
+
+		ring->data_pages[i] = page;
 	}
 
 	if (ring_no == MTK_PP_QDMA_RX_RING) {
@@ -1826,26 +1798,37 @@ no_pp_pages:
 			  ring->phys);
 	ring->dma = NULL;
 no_dma_ring:
-	kfree(ring->desc);
+	kfree(ring->data_pages);
+	ring->data_pages = NULL;
 no_data_ring:
 	page_pool_destroy(ring->page_pool);
 	return -ENOMEM;
 }
 
-static void mtk_rx_clean(struct mtk_eth *eth, struct mtk_rx_ring *ring)
+static void mtk_rx_clean(struct mtk_eth *eth, unsigned int ring_no)
 {
+	struct mtk_rx_ring *ring;
+	struct page *page;
 	int i;
 
-	if (ring->desc && ring->dma) {
+	pr_info("%s: ring %d cleaning up!\n", __func__, ring_no);
+
+	if (ring_no >= MTK_PP_MAX_RX_RING_NUM)
+		return;
+
+	ring = &eth->rx_ring[ring_no];
+
+	if (ring->data_pages && ring->dma) {
 		for (i = 0; i < ring->dma_size; i++) {
-			if (!ring->desc)
+			if (!ring->data_pages[i])
 				continue;
 			if (!ring->dma[i].rxd1)
 				continue;
-			skb_free_frag(ring->desc[i].addr);
+			page = ring->data_pages[i];
+			page_pool_put_page(ring->page_pool, page, false);
 		}
-		kfree(ring->desc);
-		ring->desc = NULL;
+		kfree(ring->data_pages);
+		ring->data_pages = NULL;
 	}
 
 	if (ring->dma) {
@@ -1855,6 +1838,10 @@ static void mtk_rx_clean(struct mtk_eth *eth, struct mtk_rx_ring *ring)
 				  ring->phys);
 		ring->dma = NULL;
 	}
+	if (xdp_rxq_info_is_reg(&ring->xdp_rxq))
+		xdp_rxq_info_unreg(&ring->xdp_rxq);
+	page_pool_destroy(ring->page_pool);
+	ring->page_pool = NULL;
 }
 
 static int mtk_hwlro_rx_init(struct mtk_eth *eth)
@@ -2174,7 +2161,7 @@ static int mtk_dma_init(struct mtk_eth *eth)
 	if (err)
 		return err;
 
-	if (eth->hwlro) {
+	if (eth->flags.hwlro) {
 		for (i = 1; i < MTK_MAX_RX_RING_NUM; i++) {
 			err = mtk_rx_alloc(eth, i, MTK_RX_FLAGS_HWLRO);
 			if (err)
@@ -2213,13 +2200,13 @@ static void mtk_dma_free(struct mtk_eth *eth)
 		eth->phy_scratch_ring = 0;
 	}
 	mtk_tx_clean(eth);
-	mtk_rx_clean(eth, &eth->rx_ring[0]);
-	mtk_rx_clean(eth, &eth->rx_ring[MTK_PP_QDMA_RX_RING]);
+	mtk_rx_clean(eth, 0);
+	mtk_rx_clean(eth, MTK_PP_QDMA_RX_RING);
 
-	if (eth->hwlro) {
+	if (eth->flags.hwlro) {
 		mtk_hwlro_rx_uninit(eth);
 		for (i = 1; i < MTK_MAX_RX_RING_NUM; i++)
-			mtk_rx_clean(eth, &eth->rx_ring[i]);
+			mtk_rx_clean(eth, i);
 	}
 
 	kfree(eth->scratch_head);
@@ -2999,7 +2986,7 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	eth->netdev[id]->base_addr = (unsigned long)eth->base;
 
 	eth->netdev[id]->hw_features = eth->soc->hw_features;
-	if (eth->hwlro)
+	if (eth->flags.hwlro)
 		eth->netdev[id]->hw_features |= NETIF_F_LRO;
 
 	eth->netdev[id]->vlan_features = eth->soc->hw_features &
@@ -3030,6 +3017,9 @@ static int mtk_probe(struct platform_device *pdev)
 	if (!eth)
 		return -ENOMEM;
 
+	pr_info("%s: size: eth %d, rx_ring %d napo %d s %d\n", __func__,
+		sizeof(*eth), sizeof(eth->rx_ring[0]), sizeof(eth->tx_napi), sizeof(eth->state));
+
 	eth->soc = of_device_get_match_data(&pdev->dev);
 
 	eth->dev = &pdev->dev;
@@ -3045,17 +3035,18 @@ static int mtk_probe(struct platform_device *pdev)
 		eth->tx_int_status_reg = MTK_PDMA_INT_STATUS;
 	}
 
-	eth->rx_headroom = max(XDP_PACKET_HEADROOM, NET_SKB_PAD);
-
+	/* Set eth->flags */
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628)) {
-		eth->rx_dma_l4_valid = RX_DMA_L4_VALID_PDMA;
-		eth->rx_headroom += NET_IP_ALIGN;
+		eth->flags.mt7628       = 1;
+		eth->flags.checksum_bit = 30;
+		eth->flags.pdma_rx_ring = 1;
+		eth->flags.pdma_tx_ring = 1;
 	} else {
-		eth->rx_dma_l4_valid = RX_DMA_L4_VALID;
-		eth->rx_headroom += NET_IP_ALIGN;
+		eth->flags.checksum_bit = 24;
+		eth->flags.pdma_rx_ring = 1;
+		eth->flags.pdma_tx_ring = 0;
 	}
-
-	eth->rx_buf_non_data = eth->rx_headroom + SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+	eth->flags.hwlro = MTK_HAS_CAPS(eth->soc->caps, MTK_HWLRO);
 
 	spin_lock_init(&eth->page_lock);
 	spin_lock_init(&eth->tx_irq_lock);
@@ -3132,8 +3123,6 @@ static int mtk_probe(struct platform_device *pdev)
 	err = mtk_hw_init(eth);
 	if (err)
 		return err;
-
-	eth->hwlro = MTK_HAS_CAPS(eth->soc->caps, MTK_HWLRO);
 
 	for_each_child_of_node(pdev->dev.of_node, mac_np) {
 		if (!of_device_is_compatible(mac_np,

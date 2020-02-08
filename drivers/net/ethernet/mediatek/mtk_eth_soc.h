@@ -26,8 +26,11 @@
 #define MTK_RX_HLEN		(NET_SKB_PAD + MTK_RX_ETH_HLEN + NET_IP_ALIGN)
 
 #define MTK_RXBUF_HEADROOM	(max(XDP_PACKET_HEADROOM, NET_SKB_PAD))
-#define MTK_RX_BUF_NON_DATA	(MTK_RXBUF_HEADROOM + \
+#define MTK_RXBUF_NON_DATA	(MTK_RXBUF_HEADROOM + NET_IP_ALIGN + \
 				SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
+#define MTK_RXBUF_LEN		(PAGE_SIZE)
+
+
 
 /* Page Pool */
 #define MTK_DMA_DUMMY_DESC	0xffffffff
@@ -650,16 +653,6 @@ enum mtk_rx_flags {
 	MTK_RX_FLAGS_QDMA,
 };
 
-struct mtk_desc {
-	union {
-		struct sk_buff *skb;
-		struct xdp_frame *xdpf;
-	};
-	dma_addr_t dma_addr;
-	void *addr;
-	u16 len;
-};
-
 /* struct mtk_rx_ring -	This struct holds info describing a RX ring
  * @dma:		The descriptor ring
  * @page:		The memory/page pointed at by the ring
@@ -669,10 +662,9 @@ struct mtk_desc {
  * @calc_idx:		The current head of ring
  */
 struct mtk_rx_ring {
-	struct mtk_rx_dma *dma;
+	struct page **data_pages;
 	struct page_pool *page_pool;
-	struct mtk_desc *desc;
-	dma_addr_t phys;
+	struct mtk_rx_dma *dma;
 	u16 frag_size;
 	u16 buf_size;
 	u16 dma_size;
@@ -680,6 +672,7 @@ struct mtk_rx_ring {
 	u16 calc_idx;
 	u32 crx_idx_reg;
 	struct xdp_rxq_info xdp_rxq;
+	dma_addr_t phys;
 };
 
 enum mkt_eth_capabilities {
@@ -877,45 +870,58 @@ struct mtk_sgmii {
  * @soc:		Holding specific data among vaious SoCs
  */
 
+struct mtk_flags_t {
+	unsigned int checksum_bit:5;    /* bit position of checksum bit in dma desciptor, 0 means disabled */
+	unsigned int rx_2b_offset:1;    /* add 2b offset to align start of packet. */
+	unsigned int rx_sg_dma:1;       /* rx support scatter gatering */
+	unsigned int hwlro:1;		/* hw lro is enabled and used */
+	unsigned int mt7628:1;		/* I am mt7628 */
+	unsigned int pdma_rx_ring:1;	/* 1 = rx ring on pdma else qdma */
+	unsigned int pdma_tx_ring:1;	/* 1 = tx ring on pdma else qdma */
+        unsigned int unused	 :19; 
+};
+
+
+//mtk_probe: size: eth 2368, rx_ring 96 napo 216 s 4
+
 struct mtk_eth {
 	struct device			*dev;
-	void __iomem			*base;
+	union {
+		struct mtk_flags_t	flags;
+	};
+	unsigned long			state;
+	struct napi_struct		rx_napi;
+	struct mtk_rx_ring		rx_ring[MTK_PP_MAX_RX_RING_NUM];
 	spinlock_t			page_lock;
 	spinlock_t			tx_irq_lock;
 	spinlock_t			rx_irq_lock;
 	struct net_device		dummy_dev;
 	struct net_device		*netdev[MTK_MAX_DEVS];
 	struct mtk_mac			*mac[MTK_MAX_DEVS];
+	refcount_t			dma_refcnt;
+	struct mtk_tx_ring		tx_ring;
+	struct napi_struct		tx_napi;
+	struct mtk_tx_dma		*scratch_ring;
+	struct bpf_prog			*xdp_prog;
+	dma_addr_t			phy_scratch_ring;
+	void				*scratch_head;
+	struct clk			*clks[MTK_CLK_MAX];
 	int				irq[3];
+
+	struct mii_bus			*mii_bus;
+	struct work_struct		pending_work;
+	const struct mtk_soc_data	*soc;
+
+	u32				tx_int_mask_reg;
+	u32				tx_int_status_reg;
+
 	u32				msg_enable;
 	unsigned long			sysclk;
 	struct regmap			*ethsys;
 	struct regmap                   *infra;
 	struct mtk_sgmii                *sgmii;
 	struct regmap			*pctl;
-	bool				hwlro;
-	refcount_t			dma_refcnt;
-	struct mtk_rx_ring		rx_ring[MTK_PP_MAX_RX_RING_NUM];
-	struct mtk_tx_ring		tx_ring;
-	struct napi_struct		tx_napi;
-	struct napi_struct		rx_napi;
-	struct mtk_tx_dma		*scratch_ring;
-	struct bpf_prog			*xdp_prog;
-	dma_addr_t			phy_scratch_ring;
-	void				*scratch_head;
-	struct clk			*clks[MTK_CLK_MAX];
-
-	struct mii_bus			*mii_bus;
-	struct work_struct		pending_work;
-	unsigned long			state;
-
-	const struct mtk_soc_data	*soc;
-
-	u32				tx_int_mask_reg;
-	u32				tx_int_status_reg;
-	u32				rx_dma_l4_valid;
-	int				rx_headroom;
-	int				rx_buf_non_data;
+	void __iomem			*base;
 
 };
 
