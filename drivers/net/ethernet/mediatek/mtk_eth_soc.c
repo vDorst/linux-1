@@ -1196,50 +1196,30 @@ drop:
 	return NETDEV_TX_OK;
 }
 
-static struct mtk_rx_ring *mtk_get_rx_ring(struct mtk_eth *eth)
+static inline void mtk_update_rx_cpu_idx(struct mtk_eth *eth, unsigned int ring_update)
 {
-	int i;
 	struct mtk_rx_ring *ring;
+	unsigned int i = 0;
 	int idx;
 
-	if (!eth->flags.hwlro)
-		return &eth->rx_ring[0];
-
-	for (i = 0; i < MTK_MAX_RX_RING_NUM; i++) {
-		ring = &eth->rx_ring[i];
-		idx = NEXT_DESP_IDX(ring->calc_idx, ring->dma_size);
-		if (ring->dma[idx].rxd2 & RX_DMA_DONE) {
-			ring->calc_idx_update = true;
-			return ring;
-		}
-	}
-
-	return NULL;
-}
-
-static void mtk_update_rx_cpu_idx(struct mtk_eth *eth)
-{
-	struct mtk_rx_ring *ring;
-	int i;
-
-	if (!eth->flags.hwlro) {
-		ring = &eth->rx_ring[0];
-		mtk_w32(eth, ring->calc_idx, ring->crx_idx_reg);
-	} else {
-		for (i = 0; i < MTK_MAX_RX_RING_NUM; i++) {
+	do {
+		if (ring_update & 1) {
 			ring = &eth->rx_ring[i];
-			if (ring->calc_idx_update) {
-				ring->calc_idx_update = false;
-				mtk_w32(eth, ring->calc_idx, ring->crx_idx_reg);
-			}
+			idx = ring->calc_idx;
+			if (idx <= 0)
+				idx = (ring->dma_size);
+			idx--;
+			mtk_w32(eth, idx, ring->crx_idx_reg);
 		}
-	}
+		ring_update = ring_update >> 1;
+		i++;
+	} while (ring_update);
 }
 
 static int mtk_poll_rx(struct napi_struct *napi, int budget,
 		       struct mtk_eth *eth)
 {
-	struct mtk_rx_dma *rxd, trxd;
+	struct mtk_rx_dma *rxd;
 	struct page *page, *newpage;
 	struct net_device *netdev;
 	struct bpf_prog *xdp_prog;
@@ -1247,33 +1227,44 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 	struct page_pool *pool;
 	struct sk_buff *skb;
 	int done = 0;
+	unsigned ring_update = 0;
 	int idx;
+	u32 rxd2, rxd3, rxd4;
 
 	xdp_prog = READ_ONCE(eth->xdp_prog);
 
 	while (done < budget) {
+		// unsigned int end = 0, between = 0, start = get_cycles();
 		u16 pktlen;
-		int mac;
+		int i, mac = 0;
 
-		ring = mtk_get_rx_ring(eth);
-		if (unlikely(!ring))
-			goto rx_done;
+		for (i = 0; i < MTK_MAX_RX_RING_NUM; i++) {
+			ring = &eth->rx_ring[i];
+			rxd = ring->dma_head;
+			rxd2 = READ_ONCE(rxd->rxd2);
+			if (rxd2 & RX_DMA_DONE) {
+				ring_update |= (1 << i);
+				goto data;
+			}
+			if (!eth->flags.hwlro)
+				break;
+		}
+		goto rx_done;
 
-		idx = NEXT_DESP_IDX(ring->calc_idx, ring->dma_size);
-		rxd = &ring->dma[idx];
+data:
+		idx = ring->calc_idx;
+		rxd3 = READ_ONCE(rxd->rxd3);
+		rxd4 = READ_ONCE(rxd->rxd4);
+
+		// mtk_rx_get_desc(&trxd, rxd);
+
 		page = ring->data_pages[idx];
 
 		pool = ring->page_pool;
 
-		mtk_rx_get_desc(&trxd, rxd);
-		if (!(trxd.rxd2 & RX_DMA_DONE))
-			break;
-
 		/* find out which mac the packet come from. values start at 1 */
-		if (eth->flags.mt7628) {
-			mac = 0;
-		} else {
-			mac = (trxd.rxd4 >> RX_DMA_FPORT_SHIFT) &
+		if (!eth->flags.mt7628) {
+			mac = (rxd4 >> RX_DMA_FPORT_SHIFT) &
 				RX_DMA_FPORT_MASK;
 			mac--;
 		}
@@ -1295,7 +1286,11 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 			goto release_desc;
 		}
 
-		pktlen = RX_DMA_GET_PLEN0(trxd.rxd2);
+		pktlen = RX_DMA_GET_PLEN0(rxd2);
+
+		// pr_info("rx: %d 0x%px, 0x%px, 0x%x\n", idx, trxd.rxd1, page_pool_get_dma_addr(page), page_address(page));
+		
+		// between = get_cycles();
 
 		skb = build_skb(page_address(page),
 				pktlen + MTK_RXBUF_NON_DATA);
@@ -1312,15 +1307,15 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 		skb->dev = netdev;
 
 		skb_checksum_none_assert(skb);
-		if (trxd.rxd4 & ((!!eth->flags.checksum_bit) << (eth->flags.checksum_bit)))
+		if (rxd4 & ((!!eth->flags.checksum_bit) << (eth->flags.checksum_bit)))
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
 
 		skb->protocol = eth_type_trans(skb, netdev);
 
 		if (netdev->features & NETIF_F_HW_VLAN_CTAG_RX &&
-		    RX_DMA_VID(trxd.rxd3))
+		    RX_DMA_VID(rxd3))
 			__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q),
-					       RX_DMA_VID(trxd.rxd3));
+					       RX_DMA_VID(rxd3));
 		skb_record_rx_queue(skb, 0);
 
 		page_pool_release_page(pool, page);
@@ -1331,16 +1326,21 @@ release_desc:
 		/* Update the descriptor with a fresh buffer */
 		rxd->rxd1 = page_pool_get_dma_addr(newpage) + \
 				      MTK_RXBUF_HEADROOM;
-
 		if (!eth->flags.rx_sg_dma)
 			rxd->rxd2 = RX_DMA_LSO;
 		else
 			rxd->rxd2 = RX_DMA_PLEN0(ring->buf_size);
 		ring->data_pages[idx] = newpage;
 
+		idx++;
+		if (idx >= ring->dma_size)
+			idx = 0;
 		ring->calc_idx = idx;
+		ring->dma_head = &ring->dma[idx];
 
 		done++;
+		// end = get_cycles();
+		// pr_info("cycles s %u b %u e %u d %u, bd %u\n", start, between, end, end - start, between - start);
 	}
 
 rx_done:
@@ -1349,7 +1349,7 @@ rx_done:
 		 * we continue
 		 */
 		wmb();
-		mtk_update_rx_cpu_idx(eth);
+		mtk_update_rx_cpu_idx(eth, ring_update);
 	}
 
 	return done;
@@ -1651,21 +1651,21 @@ static void mtk_tx_clean(struct mtk_eth *eth)
 	}
 }
 
-static int mtk_create_page_pool(struct mtk_eth *eth, struct mtk_rx_ring *ring,
-				int dma_size)
+static int mtk_create_page_pool(struct mtk_eth *eth, struct mtk_rx_ring *ring)
 {
 	struct bpf_prog *xdp_prog = NULL; /* READ_ONCE(ring->xdp_prog); */
-	struct page_pool_params pp_params = {
-		.order = 0,
-		.flags = PP_FLAG_DMA_MAP,
-		.pool_size = dma_size,
-		.nid = NUMA_NO_NODE,
-		.dev = eth->dev,
-		.dma_dir = xdp_prog ? DMA_BIDIRECTIONAL : DMA_FROM_DEVICE,
-		.offset = MTK_RXBUF_HEADROOM,
-		.max_len = MTK_MAX_RX_LENGTH,
-	};
+	struct page_pool_params pp_params = { 0 };
+	unsigned int num_pages;
 	int err;
+
+	num_pages = DIV_ROUND_UP(ring->frag_size, PAGE_SIZE);
+	pp_params.order = ilog2(num_pages);
+	pr_info("%s: size %d num_pages %d, order: %d, dma_sz %d\n", __func__, ring->frag_size, num_pages, pp_params.order, ring->dma_size);
+	pp_params.flags = PP_FLAG_DMA_MAP;
+	pp_params.pool_size = ring->dma_size;
+	pp_params.nid = dev_to_node(eth->dev);
+	pp_params.dev = eth->dev;
+	pp_params.dma_dir = xdp_prog ? DMA_BIDIRECTIONAL : DMA_FROM_DEVICE;
 
 	ring->page_pool = page_pool_create(&pp_params);
 	if (IS_ERR(ring->page_pool)) {
@@ -1674,20 +1674,14 @@ static int mtk_create_page_pool(struct mtk_eth *eth, struct mtk_rx_ring *ring,
 		return err;
 	}
 
-	pr_info("%s: page_pool_create done\n", __func__);
-
 	err = xdp_rxq_info_reg(&ring->xdp_rxq, &eth->dummy_dev, 0);
 	if (err < 0)
 		goto err_free_pp;
-
-	pr_info("%s: xdp_rxq_info_reg done\n", __func__);
 
 	err = xdp_rxq_info_reg_mem_model(&ring->xdp_rxq, MEM_TYPE_PAGE_POOL,
 					 ring->page_pool);
 	if (err)
 		goto err_unregister_rxq;
-
-	pr_info("%s: xdp_rxq_info_reg_mem_model done\n", __func__);
 
 	return 0;
 
@@ -1720,8 +1714,12 @@ static int mtk_rx_alloc(struct mtk_eth *eth, int ring_no, int rx_flag)
 
 	pr_info("%s: for r#: %d len %d dma %d\n", __func__, ring_no, rx_data_len, rx_dma_size);
 
+	ring->frag_size = mtk_max_frag_size(rx_data_len);
+	ring->buf_size = mtk_max_buf_size(ring->frag_size);
+	ring->dma_size = rx_dma_size;
+
 	/* create page pool */
-	err = mtk_create_page_pool(eth, ring, rx_dma_size);
+	err = mtk_create_page_pool(eth, ring);
 	if (err) {
 		dev_err(eth->dev, "cannot create rx page pool err:%d\n", err);
 		return -ENOMEM;
@@ -1744,8 +1742,6 @@ static int mtk_rx_alloc(struct mtk_eth *eth, int ring_no, int rx_flag)
 
 	pr_info("%s: kcalloc ring->dma done\n", __func__);
 
-	ring->frag_size = mtk_max_frag_size(rx_data_len);
-	ring->buf_size = mtk_max_buf_size(ring->frag_size);
 
 	/* alloc net pages */
 	for (i = 0; i < rx_dma_size; i++) {
@@ -1768,8 +1764,10 @@ static int mtk_rx_alloc(struct mtk_eth *eth, int ring_no, int rx_flag)
 			rxd->rxd2 = RX_DMA_LSO;
 		else
 			rxd->rxd2 = RX_DMA_PLEN0(ring->buf_size);
-
+		
+		
 		ring->data_pages[i] = page;
+		// pr_info("%s: page %d addr %px; s=0x%x\n", __func__, i, page_address(page));
 	}
 
 	if (ring_no == MTK_PP_QDMA_RX_RING) {
@@ -1777,9 +1775,9 @@ static int mtk_rx_alloc(struct mtk_eth *eth, int ring_no, int rx_flag)
 		offset = 0x1000;
 	}
 
-	ring->dma_size = rx_dma_size;
-	ring->calc_idx_update = false;
-	ring->calc_idx = rx_dma_size - 1;
+	ring->calc_idx = 0;
+	ring->dma_head = &ring->dma[0];
+
 	ring->crx_idx_reg = MTK_PRX_CRX_IDX_CFG(ring_no);
 	/* make sure that all changes to the dma ring are flushed before we
 	 * continue
@@ -1788,7 +1786,7 @@ static int mtk_rx_alloc(struct mtk_eth *eth, int ring_no, int rx_flag)
 
 	mtk_w32(eth, ring->phys, MTK_PRX_BASE_PTR_CFG(ring_no) + offset);
 	mtk_w32(eth, rx_dma_size, MTK_PRX_MAX_CNT_CFG(ring_no) + offset);
-	mtk_w32(eth, ring->calc_idx, ring->crx_idx_reg + offset);
+	mtk_w32(eth, ring->dma_size -1, ring->crx_idx_reg + offset);
 	mtk_w32(eth, MTK_PST_DRX_IDX_CFG(ring_no), MTK_PDMA_RST_IDX + offset);
 
 	return 0;

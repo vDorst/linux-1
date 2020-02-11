@@ -19,7 +19,7 @@
 #define MTK_QDMA_PAGE_SIZE	2048
 #define	MTK_MAX_RX_LENGTH	1536
 #define MTK_TX_DMA_BUF_LEN	0x3fff
-#define MTK_DMA_SIZE		256
+#define MTK_DMA_SIZE		64
 #define MTK_NAPI_WEIGHT		64
 #define MTK_MAC_COUNT		2
 #define MTK_RX_ETH_HLEN		(VLAN_ETH_HLEN + VLAN_HLEN + ETH_FCS_LEN)
@@ -662,13 +662,13 @@ enum mtk_rx_flags {
  * @calc_idx:		The current head of ring
  */
 struct mtk_rx_ring {
+	struct mtk_rx_dma *dma_head;
 	struct page **data_pages;
 	struct page_pool *page_pool;
 	struct mtk_rx_dma *dma;
 	u16 frag_size;
 	u16 buf_size;
 	u16 dma_size;
-	bool calc_idx_update;
 	u16 calc_idx;
 	u32 crx_idx_reg;
 	struct xdp_rxq_info xdp_rxq;
