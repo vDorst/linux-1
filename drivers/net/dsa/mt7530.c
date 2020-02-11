@@ -1410,9 +1410,9 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 		dev_err(ds->dev, "%s: Setup P%i mode: %s\n", __func__, port, phy_modes(state->interface));
 
 		/* Setup TX circuit incluing relevant PAD and driving */
-		mt7530_debug_print(priv);
+		// mt7530_debug_print(priv);
 		mt7530_pad_clk_setup(ds, state->interface);
-		mt7530_debug_print(priv);
+		// mt7530_debug_print(priv);
 
 		priv->p6_interface = state->interface;
 		break;
@@ -1685,7 +1685,7 @@ mt7530_probe(struct mdio_device *mdiodev)
 	mutex_init(&priv->reg_mutex);
 	dev_set_drvdata(&mdiodev->dev, priv);
 
-	mt7530_debug_print(priv);
+	// mt7530_debug_print(priv);
 
 	return dsa_register_switch(priv->ds);
 }
