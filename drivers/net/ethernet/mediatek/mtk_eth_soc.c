@@ -193,8 +193,8 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 	struct mtk_mac *mac = container_of(config, struct mtk_mac,
 					   phylink_config);
 	struct mtk_eth *eth = mac->hw;
-	u32 mcr_cur, mcr_new, sid;
 	int val, ge_mode, err;
+	u32 sid, i;
 
 	/* MT76x8 has no hardware settings between for the MAC */
 	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628) &&
@@ -319,36 +319,6 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		return;
 	}
 
-	/* Setup gmac */
-	mcr_cur = mtk_r32(mac->hw, MTK_MAC_MCR(mac->id));
-	mcr_new = mcr_cur;
-	mcr_new &= ~(MAC_MCR_SPEED_100 | MAC_MCR_SPEED_1000 |
-		     MAC_MCR_FORCE_DPX | MAC_MCR_FORCE_TX_FC |
-		     MAC_MCR_FORCE_RX_FC);
-	mcr_new |= MAC_MCR_MAX_RX_1536 | MAC_MCR_IPG_CFG | MAC_MCR_FORCE_MODE |
-		   MAC_MCR_BACKOFF_EN | MAC_MCR_BACKPR_EN | MAC_MCR_FORCE_LINK;
-
-	switch (state->speed) {
-	case SPEED_2500:
-	case SPEED_1000:
-		mcr_new |= MAC_MCR_SPEED_1000;
-		break;
-	case SPEED_100:
-		mcr_new |= MAC_MCR_SPEED_100;
-		break;
-	}
-	if (state->duplex == DUPLEX_FULL) {
-		mcr_new |= MAC_MCR_FORCE_DPX;
-		if (state->pause & MLO_PAUSE_TX)
-			mcr_new |= MAC_MCR_FORCE_TX_FC;
-		if (state->pause & MLO_PAUSE_RX)
-			mcr_new |= MAC_MCR_FORCE_RX_FC;
-	}
-
-	/* Only update control register when needed! */
-	if (mcr_new != mcr_cur)
-		mtk_w32(mac->hw, mcr_new, MTK_MAC_MCR(mac->id));
-
 	return;
 
 err_phy:
@@ -406,10 +376,8 @@ static void mtk_mac_link_down(struct phylink_config *config, unsigned int mode,
 {
 	struct mtk_mac *mac = container_of(config, struct mtk_mac,
 					   phylink_config);
-	u32 mcr = mtk_r32(mac->hw, MTK_MAC_MCR(mac->id));
 
-	mcr &= ~(MAC_MCR_TX_EN | MAC_MCR_RX_EN);
-	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
+	mtk_w32(mac->hw, MAC_MCR_FORCE_MODE, MTK_MAC_MCR(mac->id));
 }
 
 static void mtk_mac_link_up(struct phylink_config *config,
@@ -419,9 +387,37 @@ static void mtk_mac_link_up(struct phylink_config *config,
 {
 	struct mtk_mac *mac = container_of(config, struct mtk_mac,
 					   phylink_config);
-	u32 mcr = mtk_r32(mac->hw, MTK_MAC_MCR(mac->id));
+	u32 mcr;
 
-	mcr |= MAC_MCR_TX_EN | MAC_MCR_RX_EN;
+	if (!(interface == PHY_INTERFACE_MODE_SGMII ||
+	      phy_interface_mode_is_8023z(interface)) &&
+	    phylink_autoneg_inband(mode)) {
+		dev_err(mac->hw->dev,
+			"In-band mode not supported in non SGMII mode!\n");
+		return;
+	}
+
+	mcr = MAC_MCR_MAX_RX_1536 | MAC_MCR_IPG_CFG | MAC_MCR_FORCE_MODE |
+	      MAC_MCR_BACKOFF_EN | MAC_MCR_BACKPR_EN | MAC_MCR_FORCE_LINK |
+	      MAC_MCR_TX_EN | MAC_MCR_RX_EN;
+
+	switch (speed) {
+	case SPEED_2500:
+	case SPEED_1000:
+		mcr |= MAC_MCR_SPEED_1000;
+		break;
+	case SPEED_100:
+		mcr |= MAC_MCR_SPEED_100;
+		break;
+	}
+	if (duplex == DUPLEX_FULL) {
+		mcr |= MAC_MCR_FORCE_DPX;
+		if (tx_pause)
+			mcr |= MAC_MCR_FORCE_TX_FC;
+		if (rx_pause)
+			mcr |= MAC_MCR_FORCE_RX_FC;
+	}
+
 	mtk_w32(mac->hw, mcr, MTK_MAC_MCR(mac->id));
 }
 
