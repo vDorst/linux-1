@@ -572,6 +572,8 @@ mt7530_port_set_status(struct mt7530_priv *priv, int port, int enable)
 		mt7530_set(priv, MT7530_PMCR_P(port), mask);
 	else
 		mt7530_clear(priv, MT7530_PMCR_P(port), mask);
+
+	pr_info("%s: port: %d enable %d\n", __func__, port, enable);
 }
 
 static int mt7530_phy_read(struct dsa_switch *ds, int port, int regnum)
@@ -1500,32 +1502,19 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 	mcr_cur = mt7530_read(priv, MT7530_PMCR_P(port));
 	mcr_new = mcr_cur;
 	mcr_new &= ~(PMCR_FORCE_SPEED_1000 | PMCR_FORCE_SPEED_100 |
-		     PMCR_FORCE_FDX | PMCR_TX_FC_EN | PMCR_RX_FC_EN);
+		     PMCR_FORCE_FDX | PMCR_TX_FC_EN | PMCR_RX_FC_EN |
+		     PMCR_FORCE_MODE | PMCR_FORCE_LNK);
 	mcr_new |= PMCR_IFG_XMIT(1) | PMCR_MAC_MODE | PMCR_BACKOFF_EN |
-		   PMCR_BACKPR_EN | PMCR_FORCE_MODE | PMCR_FORCE_LNK;
+		   PMCR_BACKPR_EN;
 
 	/* Are we connected to external phy */
 	if (port == 5 && dsa_is_user_port(ds, 5))
 		mcr_new |= PMCR_EXT_PHY;
 
-	switch (state->speed) {
-	case SPEED_1000:
-		mcr_new |= PMCR_FORCE_SPEED_1000;
-		break;
-	case SPEED_100:
-		mcr_new |= PMCR_FORCE_SPEED_100;
-		break;
-	}
-	if (state->duplex == DUPLEX_FULL) {
-		mcr_new |= PMCR_FORCE_FDX;
-		if (state->pause & MLO_PAUSE_TX)
-			mcr_new |= PMCR_TX_FC_EN;
-		if (state->pause & MLO_PAUSE_RX)
-			mcr_new |= PMCR_RX_FC_EN;
-	}
-
 	if (mcr_new != mcr_cur)
 		mt7530_write(priv, MT7530_PMCR_P(port), mcr_new);
+
+	pr_info("%s: port: %d cur: %x new: %x\n", __func__, port, mcr_cur, mcr_new);
 }
 
 static void mt7530_phylink_mac_link_down(struct dsa_switch *ds, int port,
@@ -1533,8 +1522,16 @@ static void mt7530_phylink_mac_link_down(struct dsa_switch *ds, int port,
 					 phy_interface_t interface)
 {
 	struct mt7530_priv *priv = ds->priv;
+	u32 mcr = mt7530_read(priv, MT7530_PMCR_P(port));
+	u32 mcr_cur = mcr;
 
-	mt7530_port_set_status(priv, port, 0);
+	mcr &= ~(PMCR_FORCE_SPEED_1000 | PMCR_FORCE_SPEED_100 |
+		 PMCR_FORCE_FDX | PMCR_TX_FC_EN | PMCR_RX_FC_EN |
+		 PMCR_FORCE_LNK | PMCR_TX_EN | PMCR_RX_EN);
+
+	mt7530_write(priv, MT7530_PMCR_P(port), mcr);
+
+	pr_info("%s: port: %d cur: %x new: %x\n", __func__, port, mcr_cur, mcr);
 }
 
 static void mt7530_phylink_mac_link_up(struct dsa_switch *ds, int port,
@@ -1545,8 +1542,32 @@ static void mt7530_phylink_mac_link_up(struct dsa_switch *ds, int port,
 				       bool tx_pause, bool rx_pause)
 {
 	struct mt7530_priv *priv = ds->priv;
+	u32 mcr = mt7530_read(priv, MT7530_PMCR_P(port));
+	u32 mcr_cur = mcr;
 
-	mt7530_port_set_status(priv, port, 1);
+	mcr &= ~(PMCR_FORCE_SPEED_1000 | PMCR_FORCE_SPEED_100 |
+		 PMCR_FORCE_FDX | PMCR_TX_FC_EN | PMCR_RX_FC_EN);
+	mcr |= PMCR_FORCE_MODE | PMCR_FORCE_LNK | PMCR_TX_EN | PMCR_RX_EN;
+
+	switch (speed) {
+	case SPEED_1000:
+		mcr |= PMCR_FORCE_SPEED_1000;
+		break;
+	case SPEED_100:
+		mcr |= PMCR_FORCE_SPEED_100;
+		break;
+	}
+	if (duplex == DUPLEX_FULL) {
+		mcr |= PMCR_FORCE_FDX;
+		if (tx_pause)
+			mcr |= PMCR_TX_FC_EN;
+		if (rx_pause)
+			mcr |= PMCR_RX_FC_EN;
+	}
+
+	mt7530_write(priv, MT7530_PMCR_P(port), mcr);
+
+	pr_info("%s: port: %d cur: %x new: %x\n", __func__, port, mcr_cur, mcr);
 }
 
 static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
