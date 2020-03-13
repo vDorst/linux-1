@@ -160,31 +160,34 @@ static int mt7621_gmac0_rgmii_adjust(struct mtk_eth *eth,
 	return 0;
 }
 
-static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth, int speed)
+static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth,
+				   phy_interface_t interface)
 {
-	u32 val;
+	u32 clk_rate, intf_mode, trgmii_clk_sel;
 	int ret;
 
-	val = (speed == SPEED_1000) ?
-		INTF_MODE_RGMII_1000 : INTF_MODE_RGMII_10_100;
-	mtk_w32(eth, val, INTF_MODE);
+	/* TRGMII defaults */
+	clk_rate = 500000000,
+	intf_mode = TRGMII_MODE;
+	trgmii_clk_sel = ETHSYS_TRGMII_CLK_SEL362_5;
+
+	if (interface != PHY_INTERFACE_MODE_TRGMII) {
+	    clk_rate = 250000000;
+	    intf_mode = 0;
+	    trgmii_clk_sel = 0;
+	}
+
+	mtk_w32(eth, intf_mode, INTF_MODE);
 
 	regmap_update_bits(eth->ethsys, ETHSYS_CLKCFG0,
-			   ETHSYS_TRGMII_CLK_SEL362_5,
-			   ETHSYS_TRGMII_CLK_SEL362_5);
+			   ETHSYS_TRGMII_CLK_SEL362_5, trgmii_clk_sel);
 
-	val = (speed == SPEED_1000) ? 250000000 : 500000000;
-	ret = clk_set_rate(eth->clks[MTK_CLK_TRGPLL], val);
+	ret = clk_set_rate(eth->clks[MTK_CLK_TRGPLL], clk_rate);
 	if (ret)
 		dev_err(eth->dev, "Failed to set trgmii pll: %d\n", ret);
 
-	val = (speed == SPEED_1000) ?
-		RCK_CTRL_RGMII_1000 : RCK_CTRL_RGMII_10_100;
-	mtk_w32(eth, val, TRGMII_RCK_CTRL);
-
-	val = (speed == SPEED_1000) ?
-		TCK_CTRL_RGMII_1000 : TCK_CTRL_RGMII_10_100;
-	mtk_w32(eth, val, TRGMII_TCK_CTRL);
+	mtk_w32(eth, RCK_CTRL_RGMII_1000, TRGMII_RCK_CTRL);
+	mtk_w32(eth, TCK_CTRL_RGMII_1000, TRGMII_TCK_CTRL);
 }
 
 static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
@@ -243,18 +246,15 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 
 		/* Setup clock for 1st gmac */
 		if (!mac->id && state->interface != PHY_INTERFACE_MODE_SGMII &&
-		    !phy_interface_mode_is_8023z(state->interface) &&
-		    MTK_HAS_CAPS(mac->hw->soc->caps, MTK_GMAC1_TRGMII)) {
+		    !phy_interface_mode_is_8023z(state->interface)) {
 			if (MTK_HAS_CAPS(mac->hw->soc->caps,
-					 MTK_TRGMII_MT7621_CLK)) {
+				     MTK_TRGMII_MT7621_CLK)) {
 				if (mt7621_gmac0_rgmii_adjust(mac->hw,
 							      state->interface))
 					goto err_phy;
 			} else {
-				if (state->interface !=
-				    PHY_INTERFACE_MODE_TRGMII)
-					mtk_gmac0_rgmii_adjust(mac->hw,
-							       state->speed);
+				mtk_gmac0_rgmii_adjust(mac->hw,
+						       state->interface);
 			}
 		}
 
