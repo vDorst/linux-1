@@ -177,6 +177,11 @@ static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth,
 	    trgmii_clk_sel = 0;
 	}
 
+	pr_info("%s: PM %s before: IM %x CF0 %x RCK %x TCK %x\n", __func__,
+		phy_modes(interface), mtk_r32(eth, INTF_MODE),
+		mtk_r32(eth, ETHSYS_CLKCFG0), mtk_r32(eth, TRGMII_RCK_CTRL),
+		mtk_r32(eth, TRGMII_TCK_CTRL);
+
 	mtk_w32(eth, intf_mode, INTF_MODE);
 
 	regmap_update_bits(eth->ethsys, ETHSYS_CLKCFG0,
@@ -188,6 +193,11 @@ static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth,
 
 	mtk_w32(eth, RCK_CTRL_RGMII_1000, TRGMII_RCK_CTRL);
 	mtk_w32(eth, TCK_CTRL_RGMII_1000, TRGMII_TCK_CTRL);
+
+	pr_info("%s: PM %s after: IM %x CF0 %x RCK %x TCK %x\n", __func__,
+		phy_modes(interface), mtk_r32(eth, INTF_MODE),
+		mtk_r32(eth, ETHSYS_CLKCFG0), mtk_r32(eth, TRGMII_RCK_CTRL),
+		mtk_r32(eth, TRGMII_TCK_CTRL);
 }
 
 static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
