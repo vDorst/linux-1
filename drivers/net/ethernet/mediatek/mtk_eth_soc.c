@@ -138,7 +138,12 @@ static int mtk_mdio_read(struct mii_bus *bus, int phy_addr, int phy_reg)
 static int mt7621_gmac0_rgmii_adjust(struct mtk_eth *eth,
 				     phy_interface_t interface)
 {
-	u32 val;
+	u32 val, clkcfg0;
+	int ret;
+
+	ret = regmap_read(eth->ethsys, ETHSYS_CLKCFG0, &clkcfg0);
+	pr_info("%s: PM %s before: CF0 %x\n", __func__, phy_modes(interface),
+		clkcfg0);
 
 	/* Check DDR memory type.
 	 * Currently TRGMII mode with DDR2 memory is not supported.
@@ -157,13 +162,16 @@ static int mt7621_gmac0_rgmii_adjust(struct mtk_eth *eth,
 	regmap_update_bits(eth->ethsys, ETHSYS_CLKCFG0,
 			   ETHSYS_TRGMII_MT7621_MASK, val);
 
+	ret = regmap_read(eth->ethsys, ETHSYS_CLKCFG0, &clkcfg0);
+	pr_info("%s: after: CF0 %x\n", __func__, clkcfg0);
+
 	return 0;
 }
 
 static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth,
 				   phy_interface_t interface)
 {
-	u32 clk_rate, intf_mode, trgmii_clk_sel;
+	u32 clk_rate, intf_mode, trgmii_clk_sel, clkcfg0;
 	int ret;
 
 	/* TRGMII defaults */
@@ -177,6 +185,11 @@ static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth,
 		trgmii_clk_sel = 0;
 	}
 
+	ret = regmap_read(eth->ethsys, ETHSYS_CLKCFG0, &clkcfg0);
+	pr_info("%s: PM %s before: IM %x CF0 %x RCK %x TCK %x\n", __func__,
+		phy_modes(interface), mtk_r32(eth, INTF_MODE), clkcfg0,
+		mtk_r32(eth, TRGMII_RCK_CTRL), mtk_r32(eth, TRGMII_TCK_CTRL));
+
 	mtk_w32(eth, intf_mode, INTF_MODE);
 
 	regmap_update_bits(eth->ethsys, ETHSYS_CLKCFG0,
@@ -188,6 +201,11 @@ static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth,
 
 	mtk_w32(eth, RCK_CTRL_RGMII_1000, TRGMII_RCK_CTRL);
 	mtk_w32(eth, TCK_CTRL_RGMII_1000, TRGMII_TCK_CTRL);
+
+	ret = regmap_read(eth->ethsys, ETHSYS_CLKCFG0, &clkcfg0);
+	pr_info("%s: after: IM %x CF0 %x RCK %x TCK %x\n", __func__,
+		mtk_r32(eth, INTF_MODE), clkcfg0, mtk_r32(eth, TRGMII_RCK_CTRL),
+		mtk_r32(eth, TRGMII_TCK_CTRL));
 }
 
 static int mtk_gmac0_clock_setup(struct mtk_mac *mac, phy_interface_t interface)
