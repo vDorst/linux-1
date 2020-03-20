@@ -647,6 +647,21 @@ mt7530_cpu_port_enable(struct mt7530_priv *priv,
 	return 0;
 }
 
+char* dsa_typs(struct dsa_switch *ds, int p)
+{
+	enum type ;
+	switch (dsa_to_port(ds, p)->type) {
+	case DSA_PORT_TYPE_CPU:
+		return "CPU";
+	case DSA_PORT_TYPE_DSA:
+		return "DSA";
+	case DSA_PORT_TYPE_USER:
+		return "USER";
+	default:
+		return "UNUSED";
+	}
+}
+
 static int
 mt7530_port_enable(struct dsa_switch *ds, int port,
 		   struct phy_device *phy)
@@ -1299,6 +1314,8 @@ mt7530_setup(struct dsa_switch *ds)
 		mt7530_rmw(priv, MT7530_PCR_P(i), PCR_MATRIX_MASK,
 			   PCR_MATRIX_CLR);
 
+		pr_info("%s: P%d T %s\n", __func__, i, dsa_typs(ds, i));
+
 		if (dsa_is_cpu_port(ds, i))
 			mt7530_cpu_port_enable(priv, i);
 		else
@@ -1361,6 +1378,9 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 	struct mt7530_priv *priv = ds->priv;
 	u32 mcr_cur, mcr_new;
 
+	mcr_cur = mt7530_read(priv, MT7530_PMCR_P(port));
+	pr_info("%s: B P%d mcr 0x%x PI %s\n", __func__, port, mcr_cur, phy_modes(state->interface));
+
 	switch (port) {
 	case 0: /* Internal phy */
 	case 1:
@@ -1416,6 +1436,8 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 
 	if (mcr_new != mcr_cur)
 		mt7530_write(priv, MT7530_PMCR_P(port), mcr_new);
+
+	pr_info("%s: A P%d mcr 0x%x\n", __func__, port, mcr_new);
 }
 
 static void mt7530_phylink_mac_link_down(struct dsa_switch *ds, int port,
@@ -1423,8 +1445,15 @@ static void mt7530_phylink_mac_link_down(struct dsa_switch *ds, int port,
 					 phy_interface_t interface)
 {
 	struct mt7530_priv *priv = ds->priv;
+	u32 mcr;
+	
+	mcr = mt7530_read(priv, MT7530_PMCR_P(port));
+	pr_info("%s: B P%d mcr 0x%x\n", __func__, port, mcr);
 
 	mt7530_clear(priv, MT7530_PMCR_P(port), PMCR_LINK_SETTINGS_MASK);
+	
+	mcr = mt7530_read(priv, MT7530_PMCR_P(port));
+	pr_info("%s: A P%d mcr 0x%x\n", __func__, port, mcr);
 }
 
 static void mt7530_phylink_mac_link_up(struct dsa_switch *ds, int port,
@@ -1436,6 +1465,9 @@ static void mt7530_phylink_mac_link_up(struct dsa_switch *ds, int port,
 {
 	struct mt7530_priv *priv = ds->priv;
 	u32 mcr;
+
+	mcr = mt7530_read(priv, MT7530_PMCR_P(port));
+	pr_info("%s: B P%d mcr 0x%x PI %s\n", __func__, port, mcr, phy_modes(interface));
 
 	mcr = PMCR_RX_EN | PMCR_TX_EN | PMCR_FORCE_LNK;
 
@@ -1456,6 +1488,10 @@ static void mt7530_phylink_mac_link_up(struct dsa_switch *ds, int port,
 	}
 
 	mt7530_set(priv, MT7530_PMCR_P(port), mcr);
+
+	mcr = mt7530_read(priv, MT7530_PMCR_P(port));
+	pr_info("%s: A P%d mcr 0x%x\n", __func__, port, mcr);
+
 }
 
 static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
@@ -1463,6 +1499,8 @@ static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
 				    struct phylink_link_state *state)
 {
 	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
+
+	pr_info("%s: B P%d PI %s\n", __func__, port, phy_modes(state->interface));
 
 	switch (port) {
 	case 0: /* Internal phy */
