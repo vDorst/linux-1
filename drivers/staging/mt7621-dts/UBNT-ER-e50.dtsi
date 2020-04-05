@@ -11,11 +11,15 @@
 		reg = <0x0 0x10000000>;
 	};
 
+	aliases {
+		label-mac-device = &gmac0;
+	};
+
 	chosen {
 		bootargs = "console=ttyS0,57600 rootfstype=squashfs,jffs2 debug";
 	};
 
-	gpio-keys {
+	keys {
 		compatible = "gpio-keys";
 
 		reset {
@@ -68,12 +72,10 @@
 	};
 };
 
-&pinctrl {
-	state_default: pinctrl0 {
-		gpio {
-			groups = "uart2", "uart3", "rgmii2", "jtag";
-			function = "gpio";
-		};
+&state_default {
+	gpio {
+		groups = "uart2", "uart3", "pcie", "rgmii2", "jtag";
+		function = "gpio";
 	};
 };
 
@@ -86,11 +88,10 @@
 	 */
 	status = "disabled";
 
-	m25p80@0 {
+	m25p80@1 {
 		compatible = "jedec,spi-nor";
 		reg = <1>;
 		spi-max-frequency = <10000000>;
-		m25p,chunked-io = <32>;
 
 		partitions {
 			compatible = "fixed-partitions";
