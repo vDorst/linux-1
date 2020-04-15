@@ -1086,6 +1086,10 @@ mt7530_port_vlan_add(struct dsa_switch *ds, int port,
 		mt7530_hw_vlan_entry_init(&new_entry, port, untagged);
 		mt7530_hw_vlan_update(priv, vid, &new_entry,
 				      mt7530_hw_vlan_add);
+
+		pr_info("%s: P%d: vid %2d (%d/%d) pvid %d untag: %d flags %x\n",
+			__func__, port, vid, vlan->vid_begin, vlan->vid_end,
+			pvid, untagged, vlan->flags);
 	}
 
 	if (pvid) {
@@ -1124,6 +1128,8 @@ mt7530_port_vlan_del(struct dsa_switch *ds, int port,
 	priv->ports[port].pvid = pvid;
 
 	mutex_unlock(&priv->reg_mutex);
+
+	pr_info("%s: P%d: vid %d pvid %d\n", __func__, port, vid, pvid);
 
 	return 0;
 }
