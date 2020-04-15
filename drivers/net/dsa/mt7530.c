@@ -1110,6 +1110,8 @@ mt7530_port_vlan_add(struct dsa_switch *ds, int port,
 	}
 
 	mutex_unlock(&priv->reg_mutex);
+
+	pr_info("%s: P%d: vid %d pvid %d\n", __func__, port, vid, pvid);
 }
 
 static int
@@ -1119,6 +1121,8 @@ mt7530_port_vlan_del(struct dsa_switch *ds, int port,
 	struct mt7530_hw_vlan_entry target_entry;
 	struct mt7530_priv *priv = ds->priv;
 	u16 vid, pvid;
+	
+	pr_info("%s: P%d: vid %d pvid %d\n", __func__, port, vid, pvid);
 
 	mutex_lock(&priv->reg_mutex);
 
