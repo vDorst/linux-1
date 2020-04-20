@@ -371,6 +371,8 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 	if (mcr_new != mcr_cur)
 		mtk_w32(mac->hw, mcr_new, MTK_MAC_MCR(mac->id));
 
+	pr_info("%s: G%d mcr %x\n", __func__, mac->id, mcr_new);
+
 	return;
 
 err_phy:
@@ -2757,6 +2759,16 @@ static int mtk_set_rxnfc(struct net_device *dev, struct ethtool_rxnfc *cmd)
 	return ret;
 }
 
+static int mtk_change_mtu(struct net_device *net_dev, int mtu)
+{
+	struct mtk_mac *mac = netdev_priv(net_dev);
+
+	pr_info("%s: G%d mtu %d\n", __func__, mac->id, mtu);
+
+	return 0;
+}
+
+
 static const struct ethtool_ops mtk_ethtool_ops = {
 	.get_link_ksettings	= mtk_get_link_ksettings,
 	.set_link_ksettings	= mtk_set_link_ksettings,
@@ -2788,6 +2800,7 @@ static const struct net_device_ops mtk_netdev_ops = {
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= mtk_poll_controller,
 #endif
+	//.ndo_change_mtu	= mtk_change_mtu,
 };
 
 static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
@@ -2882,6 +2895,10 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 
 	eth->netdev[id]->irq = eth->irq[0];
 	eth->netdev[id]->dev.of_node = np;
+
+	eth->netdev[id]->mtu = 1536;
+	eth->netdev[id]->min_mtu = ETH_MIN_MTU;
+	eth->netdev[id]->max_mtu = 1536;
 
 	if (name)
 		strlcpy(eth->netdev[id]->name, name, IFNAMSIZ);
