@@ -1436,9 +1436,17 @@ static void mt7530_phylink_mac_link_up(struct dsa_switch *ds, int port,
 				       bool tx_pause, bool rx_pause)
 {
 	struct mt7530_priv *priv = ds->priv;
+	int eee_enable;
 	u32 mcr;
 
 	mcr = PMCR_RX_EN | PMCR_TX_EN | PMCR_FORCE_LNK;
+
+	if (mode == MLO_AN_PHY && phydev && priv->eee_enable & BIT(port)) {
+		eee_enable = phy_init_eee(phydev, 0);
+		if (!eee_enable) {
+			mcr |= PMCR_FORCE_EEE1G | PMCR_FORCE_EEE100;
+		}
+	}
 
 	switch (speed) {
 	case SPEED_1000:
@@ -1457,6 +1465,9 @@ static void mt7530_phylink_mac_link_up(struct dsa_switch *ds, int port,
 	}
 
 	mt7530_set(priv, MT7530_PMCR_P(port), mcr);
+
+	pr_info("%s: P%d mcr %x bit %x\n", __func__, port, mcr,
+		priv->eee_enable);
 }
 
 static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
@@ -1561,6 +1572,59 @@ mt7530_phylink_mac_link_state(struct dsa_switch *ds, int port,
 	return 1;
 }
 
+static int mt7530_get_mac_eee(struct dsa_switch *ds, int port,
+			      struct ethtool_eee *e)
+{
+	struct mt7530_priv *priv = ds->priv;
+	u32 eeecr, pmsr;
+
+	if (priv->eee_enable & BIT(port)) {
+		eeecr = mt7530_read(priv, MT7530_PMEEECR_P(port));
+		e->tx_lpi_enabled = !!!(eeecr & LPI_MODE_EN);
+		e->tx_lpi_timer = ((eeecr >> 4) & 0xFFF) * 1000;
+
+		pmsr = mt7530_read(priv, MT7530_PMSR_P(port));
+		e->eee_active = !!(pmsr & (PMSR_EEE1G | PMSR_EEE100M));
+	} else {
+		e->tx_lpi_enabled = 0;
+		e->eee_active = 0;
+	}
+
+	pr_info("%s: P%d enable %d bits 0x%02x, timer %d \n", __func__, port, e->eee_enabled,
+		priv->eee_enable, e->tx_lpi_enabled);
+
+	return 0;
+}
+
+static int mt7530_set_mac_eee(struct dsa_switch *ds, int port,
+			      struct ethtool_eee *e)
+{
+	struct mt7530_priv *priv = ds->priv;
+	u32 eeecr, lpi_timer;
+
+	lpi_timer = e->tx_lpi_timer / 1000;
+
+	if (e->tx_lpi_enabled && lpi_timer > 0xFFF)
+		return -EINVAL;
+
+	if (e->eee_enabled) {
+		priv->eee_enable |= BIT(port);
+		eeecr = mt7530_read(priv, MT7530_PMEEECR_P(port));
+		eeecr &= 0xFFFF0000;
+		if (!e->tx_lpi_enabled)
+			eeecr |= LPI_MODE_EN;
+		eeecr = LPI_THRESH(lpi_timer);
+		mt7530_write(priv, MT7530_PMEEECR_P(port), eeecr);
+	} else {
+		priv->eee_enable &= ~(BIT(port));
+	}
+
+	pr_info("%s: P%d enable %x bits %x\n", __func__, port, e->eee_enabled,
+		priv->eee_enable);
+
+	return 0;
+}
+
 static const struct dsa_switch_ops mt7530_switch_ops = {
 	.get_tag_protocol	= mtk_get_tag_protocol,
 	.setup			= mt7530_setup,
@@ -1588,6 +1652,8 @@ static const struct dsa_switch_ops mt7530_switch_ops = {
 	.phylink_mac_config	= mt7530_phylink_mac_config,
 	.phylink_mac_link_down	= mt7530_phylink_mac_link_down,
 	.phylink_mac_link_up	= mt7530_phylink_mac_link_up,
+	.get_mac_eee		= mt7530_get_mac_eee,
+	.set_mac_eee		= mt7530_set_mac_eee,
 };
 
 static const struct of_device_id mt7530_of_match[] = {
