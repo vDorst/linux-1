@@ -4,57 +4,10 @@
 #include <dt-bindings/gpio/gpio.h>
 
 / {
-	model = "UBNT-ERX-SFP";
-	compatible = "ubiquiti,edgerouterx-sfp", "mediatek,mt7621-soc";
+	model = "Ubiquiti EdgeRouter X SFP";
+	compatible = "ubnt,edgerouter-x-sfp", "mediatek,mt7621-soc";
 
-	leds {
-		compatible = "gpio-leds";
-
-		/* Fixme: Currently a hack to enable SFP clk gate. */
-		sfp {
-			label = "sfp:i2c";
-			gpios = <&gpio 7 GPIO_ACTIVE_LOW>;
-			default-state = "off";
-			linux,default-trigger = "default-on";
-		};
-	};
-
-	gpio_expander_export {
-		compatible = "gpio-export";
-		#size-cells = <0>;
-
-		poe_power_port0 {
-			gpio-export,name = "poe_power_port0";
-			gpio-export,output = <0>;
-			gpios = <&expander0 0 GPIO_ACTIVE_HIGH>;
-		};
-
-		poe_power_port1 {
-			gpio-export,name = "poe_power_port1";
-			gpio-export,output = <0>;
-			gpios = <&expander0 1 GPIO_ACTIVE_HIGH>;
-		};
-
-		poe_power_port2 {
-			gpio-export,name = "poe_power_port2";
-			gpio-export,output = <0>;
-			gpios = <&expander0 2 GPIO_ACTIVE_HIGH>;
-		};
-
-		poe_power_port3 {
-			gpio-export,name = "poe_power_port3";
-			gpio-export,output = <0>;
-			gpios = <&expander0 3 GPIO_ACTIVE_HIGH>;
-		};
-
-		poe_power_port4 {
-			gpio-export,name = "poe_power_port4";
-			gpio-export,output = <0>;
-			gpios = <&expander0 4 GPIO_ACTIVE_HIGH>;
-		};
-	};
-
-	sfp_lan5: sfp_lan5 {
+	sfp_eth5: sfp_eth5 {
 		compatible = "sff,sfp";
 		i2c-bus = <&i2c>;
 		mod-def0-gpio = <&expander0 5 GPIO_ACTIVE_LOW>;
@@ -94,21 +47,30 @@
 	};
 };
 
+&gpio {
+	sfp_i2c_clk_gate {
+		gpio-hog;
+		gpios = <7 GPIO_ACTIVE_LOW>;
+		output-high;
+	};
+};
+
 &mdio {
-	ephy5: ethernet-phy@7 {
+	ephy7: ethernet-phy@7 {
 		reg = <7>;
-		sfp = <&sfp_lan5>;
+		sfp = <&sfp_eth5>;
 	};
 };
 
 &mt7530 {
 	ports {
-		lan5: port@5 {
+		port@5 {
 			reg = <5>;
-			label = "lan5";
-			phy-handle = <&ephy5>;
+			label = "eth5";
+			phy-handle = <&ephy7>;
 			phy-mode = "rgmii-rxid";
-			// status = "disabled";
+			mtd-mac-address = <&factory 0x22>;
+			mtd-mac-address-increment = <5>;
 		};
 	};
 };

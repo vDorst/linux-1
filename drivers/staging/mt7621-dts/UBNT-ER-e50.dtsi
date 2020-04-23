@@ -117,6 +117,7 @@
 	gmac0: mac@0 {
 		compatible = "mediatek,eth-mac";
 		mtd-mac-address = <&factory 0x22>;
+		label = "dsa";
 		reg = <0>;
 		phy-mode = "trgmii";
 
@@ -157,11 +158,6 @@
 
 			resets = <&rstctrl 2>;
 			reset-names = "mcm";
-			/* Put this external phy in power-down and isolation
-			 * when port 5 is used in PHY P0/P4 or DSA mode. Because
-			 * external phy and port 5 share same bus to 2nd GMAC.
-			 */
-			mediatek,ephy-handle = <&ephy5>;
 
 			ports {
 				#address-cells = <1>;
@@ -169,27 +165,35 @@
 		
 				port@0 {
 					reg = <0>;
-					label = "lan0";
+					label = "eth0";
 				};
 		
 				port@1 {
 					reg = <1>;
-					label = "lan1";
+					label = "eth1";
+					mtd-mac-address = <&factory 0x22>;
+					mtd-mac-address-increment = <1>;
 				};
 		
 				port@2 {
 					reg = <2>;
-					label = "lan2";
+					label = "eth2";
+					mtd-mac-address = <&factory 0x22>;
+					mtd-mac-address-increment = <2>;
 				};
 		
 				port@3 {
 					reg = <3>;
-					label = "lan3";
+					label = "eth3";
+					mtd-mac-address = <&factory 0x22>;
+					mtd-mac-address-increment = <3>;
 				};
 
 				port@4 {
 					reg = <4>;
-					label = "lan4";
+					label = "eth4";
+					mtd-mac-address = <&factory 0x22>;
+					mtd-mac-address-increment = <4>;
 				};
 
 				cpu_port0: port@6 {
