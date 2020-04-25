@@ -2792,6 +2792,54 @@ static int mtk_ethtool_get_link_ksettings(struct net_device *dev,
 	return phylink_ethtool_ksettings_get(mac->phylink, cmd);
 }
 
+static int mtk_set_eee(struct net_device *dev, struct ethtool_eee *e)
+{
+	struct mtk_mac *mac = netdev_priv(dev);
+	u32 eeecr, lpi_timer;
+
+	pr_info("%s: enbled %d\n", __func__, e->eee_enabled);
+
+	if (!dev->phydev)
+		return -ENODEV;
+
+	lpi_timer = e->tx_lpi_timer / 1000;
+
+	if (e->tx_lpi_enabled && lpi_timer > 0xFF)
+		return -EINVAL;
+
+	if (e->eee_enabled) {
+		//priv->eee_enable |= BIT(port);
+		eeecr = mtk_r32(mac->hw, MTK_MAC_EEE(mac->id));
+		eeecr &= 0xFFFF000E;
+		if (!e->tx_lpi_enabled)
+			eeecr |= LPI_MODE_EN;
+		eeecr = LPI_THRESH(lpi_timer);
+		mtk_w32(mac->hw, eeecr, MTK_MAC_EEE(mac->id));
+	} else {
+		//priv->eee_enable &= ~(BIT(port));
+	}
+
+	return phylink_ethtool_set_eee(mac->phylink, e);
+}
+
+static int mtk_get_eee(struct net_device *dev, struct ethtool_eee *e)
+{
+	struct mtk_mac *mac = netdev_priv(dev);
+	u32 eeecr;
+
+	pr_info("%s: enbled %d\n", __func__, e->eee_enabled);
+
+	if (e->eee_enabled) {
+		eeecr = mtk_r32(mac->hw, MTK_MAC_EEE(mac->id));
+		e->tx_lpi_enabled = !!!(eeecr & LPI_MODE_EN);
+		e->tx_lpi_timer = ((eeecr >> 8) & 0xFF) * 1000;
+	} else {
+		e->tx_lpi_enabled = 0;
+	}
+
+	return phylink_ethtool_get_eee(mac->phylink, e);
+}
+
 static int mtk_change_mtu(struct net_device *net_dev, int mtu)
 {
 	struct mtk_mac *mac = netdev_priv(net_dev);
@@ -2818,6 +2866,8 @@ static const struct ethtool_ops mtk_ethtool_ops = {
 	.set_pauseparam		= mtk_ethtool_set_pauseparam,
 	.get_link_ksettings	= mtk_ethtool_get_link_ksettings,
 	.set_link_ksettings	= mtk_ethtool_set_link_ksettings,
+	.get_eee		= mtk_get_eee,
+	.set_eee		= mtk_set_eee,
 };
 
 static const struct net_device_ops mtk_netdev_ops = {

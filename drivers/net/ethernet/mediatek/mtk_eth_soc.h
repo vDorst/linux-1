@@ -335,6 +335,16 @@
 #define MAC_MCR_FORCE_LINK	BIT(0)
 #define MAC_MCR_FORCE_LINK_DOWN	(MAC_MCR_FORCE_MODE)
 
+/* Mac EEE registers */
+#define MTK_MAC_EEE(x)		(0x10104 + (x) * 0x100)
+#define WAKEUP_TIME_1000(x)	((x & 0xFF) << 24)
+#define WAKEUP_TIME_100(x)	((x & 0xFF) << 16)
+#define LPI_THRESH(x)		((x & 0xFF) << 8)
+#define CKG_TXIDLE		BIT(3)
+#define CKG_RXLPI		BIT(2)
+#define TX_DOWN_REQ		BIT(1)
+#define LPI_MODE_EN		BIT(0)
+
 /* Mac status registers */
 #define MTK_MAC_MSR(x)		(0x10108 + (x * 0x100))
 #define MAC_MSR_EEE1G		BIT(7)
