@@ -1216,6 +1216,8 @@ mt7530_setup(struct dsa_switch *ds)
 	u32 id, val;
 	int ret, i;
 
+	pr_info("%s\n", __func__);
+
 	/* The parent node of master netdev which holds the common system
 	 * controller also is the container for two GMACs nodes representing
 	 * as two netdev instances.
@@ -1571,22 +1573,18 @@ static int mt7530_get_mac_eee(struct dsa_switch *ds, int port,
 			      struct ethtool_eee *e)
 {
 	struct mt7530_priv *priv = ds->priv;
-	u32 eeecr, pmsr;
+	u32 eeecr;
 
 	if (priv->eee_enable & BIT(port)) {
 		eeecr = mt7530_read(priv, MT7530_PMEEECR_P(port));
 		e->tx_lpi_enabled = !!!(eeecr & LPI_MODE_EN);
 		e->tx_lpi_timer = ((eeecr >> 4) & 0xFFF) * 1000;
-
-		pmsr = mt7530_read(priv, MT7530_PMSR_P(port));
-		e->eee_active = !!(pmsr & (PMSR_EEE1G | PMSR_EEE100M));
 	} else {
 		e->tx_lpi_enabled = 0;
-		e->eee_active = 0;
 	}
 
-	pr_info("%s: P%d enable %d bits 0x%02x, timer %d \n", __func__, port, e->eee_enabled,
-		priv->eee_enable, e->tx_lpi_enabled);
+	pr_info("%s: P%d enable %d bits 0x%02x, timer %d \n", __func__, port,
+		e->eee_enabled, priv->eee_enable, e->tx_lpi_enabled);
 
 	return 0;
 }
@@ -1663,6 +1661,8 @@ mt7530_probe(struct mdio_device *mdiodev)
 {
 	struct mt7530_priv *priv;
 	struct device_node *dn;
+
+	pr_info("%s\n", __func__);
 
 	dn = mdiodev->dev.of_node;
 
