@@ -53,6 +53,17 @@ choice
 		select CLKSRC_MIPS_GIC
 		select HAVE_PCI if PCI_MT7621
 		select SOC_BUS
+		select WATCHDOG
+		select MT7621_WDT
+		select NETDEVICES
+		select NET_CORE
+		select NET_VENDOR_MEDIATEK
+		select NET_MEDIATEK_SOC
+		select GPIOLIB
+		select GPIO_MT7621
+		select STAGING
+		select PINCTRL
+		select PINCTRL_RT2880
 endchoice
 
 choice
@@ -93,6 +104,42 @@ choice
 		bool "VoCore2"
 		depends on SOC_MT7620
 		select BUILTIN_DTB
+
+	config DTB_MTC_WR1201
+		bool "MTC WR1201"
+		depends on SOC_MT7621
+		select BUILTIN_DTB
+		select NET_DSA_MT7530
+		select PCI
+		select PCIEPORTBUS
+		select PCI_MT7621
+		select PCI_MT7621_PHY
+		select SPI
+		select CONFIG_SPI_MT7621
+		select MTD
+		select MTD_SPI_NOR
+		select USB_SUPPORT
+		select MMC
+		select MMC_MTK
+
+	config DTB_UBNT_EDGEROUTER_X_SFP
+		bool "UBNT EDGEROUTER X SFP"
+		depends on SOC_MT7621
+		select BUILTIN_DTB
+		select MTD_NAND_MT7621
+		select NET_DSA_MT7530
+		select I2C
+		select I2C_MT7621
+		select SFP
+		select CONFIG_GPIO_PCA953X
+		select AT803X
+
+	config DTB_UBNT_EDGEROUTER_X
+		bool "UBNT EDGEROUTER X"
+		depends on SOC_MT7621
+		select BUILTIN_DTB
+		select MTD_NAND_MT7621
+		select NET_DSA_MT7530
 
 endchoice
 
