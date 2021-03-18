@@ -26,6 +26,7 @@
 
 	aliases {
 		serial0 = &uartlite;
+		bootargs = "console=ttyS0,57600";
 	};
 
 
@@ -36,9 +37,9 @@
 		regulator-max-microvolt = <3300000>;
 		enable-active-high;
 		regulator-always-on;
-	  };
+	};
 
-	  mmc_fixed_1v8_io: fixedregulator@1 {
+	mmc_fixed_1v8_io: fixedregulator@1 {
 		compatible = "regulator-fixed";
 		regulator-name = "mmc_io";
 		regulator-min-microvolt = <1800000>;
@@ -412,11 +413,11 @@
 		gmac1: mac@1 {
 			compatible = "mediatek,eth-mac";
 			reg = <1>;
-			status = "off";
+			status = "disabled";
 			phy-mode = "rgmii-rxid";
 			phy-handle = <&phy_external>;
 		};
-		mdio-bus {
+		mdio: mdio-bus {
 			#address-cells = <1>;
 			#size-cells = <0>;
 
@@ -429,11 +430,11 @@
 				pinctrl-0 = <&rgmii2_pins>;
 			};
 
-			switch0: switch0@0 {
+			switch0: switch@1f {
 				compatible = "mediatek,mt7621";
 				#address-cells = <1>;
 				#size-cells = <0>;
-				reg = <0>;
+				reg = <0x1f>;
 				mediatek,mcm;
 				resets = <&rstctrl 2>;
 				reset-names = "mcm";
@@ -443,27 +444,27 @@
 					#size-cells = <0>;
 					reg = <0>;
 					port@0 {
-						status = "off";
+						status = "disabled";
 						reg = <0>;
 						label = "lan0";
 					};
 					port@1 {
-						status = "off";
+						status = "disabled";
 						reg = <1>;
 						label = "lan1";
 					};
 					port@2 {
-						status = "off";
+						status = "disabled";
 						reg = <2>;
 						label = "lan2";
 					};
 					port@3 {
-						status = "off";
+						status = "disabled";
 						reg = <3>;
 						label = "lan3";
 					};
 					port@4 {
-						status = "off";
+						status = "disabled";
 						reg = <4>;
 						label = "lan4";
 					};
