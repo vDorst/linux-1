@@ -213,6 +213,11 @@
 
 	pinctrl: pinctrl {
 		compatible = "ralink,rt2880-pinmux";
+		pinctrl-names = "default";
+		pinctrl-0 = <&state_default>;
+
+		state_default: pinctrl0 {
+		};
 
 		i2c_pins: i2c0-pins {
 			pinmux {
@@ -329,6 +334,8 @@
 	};
 
 	xhci: xhci@1E1C0000 {
+		#address-cells = <1>;
+		#size-cells = <0>;
 		status = "okay";
 
 		compatible = "mediatek,mt8173-xhci";
@@ -341,6 +348,25 @@
 
 		interrupt-parent = <&gic>;
 		interrupts = <GIC_SHARED 22 IRQ_TYPE_LEVEL_HIGH>;
+
+		/*
+		 * Port 1 of both hubs is one usb slot and referenced here.
+		 * The binding doesn't allow to address individual hubs.
+		 * hub 1 - port 1 is ehci and ohci, hub 2 - port 1 is xhci.
+		 */
+		xhci_ehci_port1: port@1 {
+			reg = <1>;
+			#trigger-source-cells = <0>;
+		};
+
+		/*
+		 * Only the second usb hub has a second port. That port serves
+		 * ehci and ohci.
+		 */
+		ehci_port2: port@2 {
+			reg = <2>;
+			#trigger-source-cells = <0>;
+		};
 	};
 
 	gic: interrupt-controller@1fbc0000 {
@@ -359,15 +385,20 @@
 		};
 	};
 
+	nficlock: nficlock {
+		#clock-cells = <0>;
+		compatible = "fixed-clock";
+
+		clock-frequency = <125000000>;
+	};
+
 	nand: nand@1e003000 {
 		status = "disabled";
 
-		compatible = "mediatek,mt7621-nand";
-		bank-width = <2>;
+		compatible = "mediatek,mt7621-nfc";
 		reg = <0x1e003000 0x800
 			0x1e003800 0x800>;
-		#address-cells = <1>;
-		#size-cells = <1>;
+		reg-names = "nfi", "ecc";
 
 		clocks = <&sysc MT7621_CLK_NAND>;
 		clock-names = "nand";
@@ -483,6 +514,13 @@
 		};
 	};
 
+	gsw: gsw@1e110000 {
+		compatible = "mediatek,mt7621-gsw";
+		reg = <0x1e110000 0x8000>;
+		interrupt-parent = <&gic>;
+		interrupts = <GIC_SHARED 23 IRQ_TYPE_LEVEL_HIGH>;
+	};
+
 	pcie: pcie@1e140000 {
 		compatible = "mediatek,mt7621-pci";
 		reg = <0x1e140000 0x100     /* host-pci bridge registers */
@@ -521,7 +559,7 @@
 
 		reset-gpios = <&gpio 19 GPIO_ACTIVE_LOW>;
 
-		pcie@0,0 {
+		pcie0: pcie@0,0 {
 			reg = <0x0000 0 0 0 0>;
 			#address-cells = <3>;
 			#size-cells = <2>;
@@ -529,7 +567,7 @@
 			bus-range = <0x00 0xff>;
 		};
 
-		pcie@1,0 {
+		pcie1: pcie@1,0 {
 			reg = <0x0800 0 0 0 0>;
 			#address-cells = <3>;
 			#size-cells = <2>;
@@ -537,7 +575,7 @@
 			bus-range = <0x00 0xff>;
 		};
 
-		pcie@2,0 {
+		pcie2: pcie@2,0 {
 			reg = <0x1000 0 0 0 0>;
 			#address-cells = <3>;
 			#size-cells = <2>;
