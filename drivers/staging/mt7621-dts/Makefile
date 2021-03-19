@@ -2,5 +2,6 @@
 dtb-$(CONFIG_DTB_GNUBEE1)      += gbpc1.dtb
 dtb-$(CONFIG_DTB_GNUBEE2)      += gbpc2.dtb
 dtb-$(CONFIG_DTB_UBNT_ERX_SFP) += mt7621_ubnt_edgerouter-x-sfp.dtb
+dtb-$(CONFIG_DTB_UBNT_ERX) += mt7621_ubnt_edgerouter-x.dtb
 
 obj-y				+= $(patsubst %.dtb, %.dtb.o, $(dtb-y))
