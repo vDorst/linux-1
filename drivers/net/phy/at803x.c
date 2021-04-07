@@ -167,6 +167,7 @@ struct at803x_priv {
 	u16 clk_25m_mask;
 	u8 smarteee_lpi_tw_1g;
 	u8 smarteee_lpi_tw_100m;
+	u8 mode;
 	struct regulator_dev *vddio_rdev;
 	struct regulator_dev *vddh_rdev;
 	struct regulator *vddio;
@@ -544,10 +545,11 @@ static int at803x_parse_dt(struct phy_device *phydev)
 
 static int at803x_mode(struct phy_device *phydev)
 {
-	int mode;
+	int mode = phy_read(phydev, AT803X_REG_CHIP_CONFIG);
+	if (mode < 0)
+		return mode;
 
-	mode = phy_read(phydev, AT803X_REG_CHIP_CONFIG) & AT803X_MODE_CFG_MASK;
-
+	mode &= AT803X_MODE_CFG_MASK;
 	if (mode == AT803X_MODE_CFG_BX1000_RGMII_50 ||
 	    mode == AT803X_MODE_CFG_BX1000_RGMII_75)
 		return AT803X_MODE_FIBER;
@@ -566,6 +568,7 @@ static int at803x_sfp_insert(void *upstream, const struct sfp_eeprom_id *id)
 	 * at 1Gbit.
 	 */
 	phylink_set(at803x_support, 1000baseT_Full);
+	phylink_set(at803x_support, 100baseT_Full);
 
 	sfp_parse_support(phydev->sfp_bus, id, support);
 
@@ -578,6 +581,7 @@ static int at803x_sfp_insert(void *upstream, const struct sfp_eeprom_id *id)
 	iface = sfp_select_interface(phydev->sfp_bus, support);
 
 	if (iface != PHY_INTERFACE_MODE_SGMII &&
+	    iface != PHY_INTERFACE_MODE_100BASEX &&
 	    iface != PHY_INTERFACE_MODE_1000BASEX)
 		goto unsupported_mode;
 
@@ -587,7 +591,7 @@ static int at803x_sfp_insert(void *upstream, const struct sfp_eeprom_id *id)
 
 unsupported_mode:
 	dev_info(&phydev->mdio.dev, "incompatible SFP module inserted;"
-		 "Only SGMII at 1Gbit/1000BASEX are supported!\n");
+		 "Only SGMII at 1Gbit/1000BASEX/100BASEX are supported!\n");
 	return -EINVAL;
 }
 
@@ -603,15 +607,22 @@ static int at803x_probe(struct phy_device *phydev)
 	struct at803x_priv *priv;
 	int ret;
 
-	if (at803x_mode(phydev) == AT803X_MODE_FIBER) {
+	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+
+	/* Detect bootstrap device mode */
+	ret = at803x_mode(phydev);
+	if (ret < 0)
+		return ret;
+
+	priv->mode = ret;
+
+	if (priv->mode == AT803X_MODE_FIBER) {
 		ret = phy_sfp_probe(phydev, &at803x_sfp_ops);
 		if (ret < 0)
 			return ret;
 	}
-
-	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
-	if (!priv)
-		return -ENOMEM;
 
 	phydev->priv = priv;
 
@@ -687,6 +698,8 @@ static int at8031_pll_config(struct phy_device *phydev)
 static int at803x_config_init(struct phy_device *phydev)
 {
 	int ret;
+
+	dev_info(&phydev->mdio.dev, "HOST interface %s", phy_modes(phydev->interface));
 
 	/* The RX and TX delay default is:
 	 *   after HW reset: RX delay enabled and TX delay disabled
@@ -826,10 +839,11 @@ static void at803x_link_change_notify(struct phy_device *phydev)
 
 static int at803x_read_status(struct phy_device *phydev)
 {
+	struct at803x_priv *priv = phydev->priv;
 	int ss, err, old_link = phydev->link;
 
-	/* Handle (Fiber) SGMII to RGMII mode */
-	if (at803x_mode(phydev) == AT803X_MODE_FIBER)
+	/* Handle SerDes to RGMII mode */
+	if (priv->mode == AT803X_MODE_FIBER)
 		return genphy_c37_read_status(phydev);
 
 	/* Update the link, but return if there was an error */
@@ -928,14 +942,21 @@ static int at803x_config_mdix(struct phy_device *phydev, u8 ctrl)
 			  FIELD_PREP(AT803X_SFC_MDI_CROSSOVER_MODE_M, val));
 }
 
+static int at803x_config_aneg_fiber(struct phy_device *phydev)
+{
+	dev_info(&phydev->mdio.dev, "Working Mode: Fiber");
+
+	return genphy_c37_config_aneg(phydev);
+}
+
 static int at803x_config_aneg(struct phy_device *phydev)
 {
+	struct at803x_priv *priv = phydev->priv;
 	int ret;
 
-	/* Handle (Fiber) SerDes to RGMII mode */
-	if (at803x_mode(phydev) == AT803X_MODE_FIBER) {
-		pr_warn("%s: fiber\n", __func__);
-		return genphy_c37_config_aneg(phydev);
+	/* Handle (Fiber Mode) SerDes to RGMII mode */
+	if (priv->mode == AT803X_MODE_FIBER) {
+		return at803x_config_aneg_fiber(phydev);
 	}
 
 	ret = at803x_config_mdix(phydev, phydev->mdix_ctrl);
