@@ -18,6 +18,7 @@
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/reset.h>
+#include <linux/timer.h>
 #include <linux/gpio/consumer.h>
 #include <linux/gpio/driver.h>
 #include <net/dsa.h>
@@ -383,6 +384,26 @@ mt7530_fdb_write(struct mt7530_priv *priv, u16 vid,
 	/* Write array into the ARL table */
 	for (i = 0; i < 3; i++)
 		mt7530_write(priv, MT7530_ATA1 + (i * 4), reg[i]);
+}
+
+void mt7530_fcs_handler(struct timer_list *t)
+{
+	struct mt7530_priv *priv = from_timer(priv, t, fcs_timer);
+	u32 val;
+
+	mutex_lock_nested(&priv->bus->mdio_lock, MDIO_MUTEX_NESTED);
+	// Make sure flow control has been disabled
+	val = mt7530_mii_read(priv, MT7530_GFCCR0);
+
+	if(!(val & FC_EN)) {
+		// Restart flow control add ON2OFF support
+		val |= FC_EN | FC_ON2OFF;
+		mt7530_mii_write(priv, MT7530_GFCCR0, val);
+	} else {
+		// Flow control didn't disable yet. Add timer to handle it.
+		mod_timer(&priv->fcs_timer, jiffies + HZ);
+	}
+	mutex_unlock(&priv->bus->mdio_lock);
 }
 
 /* Setup TX circuit including relevant PAD and driving */
@@ -1862,6 +1883,37 @@ mt7530_irq_thread_fn(int irq, void *dev_id)
 		}
 	}
 
+	// For transmit queue 0 timed out issue
+	// Free buffer lower than low water mark
+	if (val & BIT(SYS_BMU_INT)) {
+		dev_err(priv->dev, "Warning - free internal queue memory lower"
+			" than low water mark!");
+
+		mutex_lock_nested(&priv->bus->mdio_lock, MDIO_MUTEX_NESTED);
+
+		// Disable flow control
+		val = mt7530_mii_read(priv, MT7530_GFCCR0);
+		val &= ~FC_EN;
+		mt7530_mii_write(priv, MT7530_GFCCR0, val);
+
+		// Make sure flow control has been disabled
+		val = mt7530_mii_read(priv, MT7530_GFCCR0);
+
+		if(!(val & FC_EN)) {
+			// Restart flow control add ON2OFF support
+			val |= FC_EN | FC_ON2OFF;
+			mt7530_mii_write(priv, MT7530_GFCCR0, val);
+		} else {
+			/* Flow control didn't disable yet. Add timer to
+			 * handle it.
+			 */
+			mod_timer(&priv->fcs_timer, jiffies + HZ);
+		}
+		mutex_unlock(&priv->bus->mdio_lock);
+
+		handled = true;
+	}
+
 	return IRQ_RETVAL(handled);
 }
 
@@ -1937,6 +1989,9 @@ mt7530_setup_mdio_irq(struct mt7530_priv *priv)
 			ds->slave_mii_bus->irq[p] = irq;
 		}
 	}
+
+	/* Create BMU interrupt */
+	irq_create_mapping(priv->irq_domain, SYS_BMU_INT);
 }
 
 static int
@@ -1957,7 +2012,7 @@ mt7530_setup_irq(struct mt7530_priv *priv)
 		return priv->irq ? : -EINVAL;
 	}
 
-	priv->irq_domain = irq_domain_add_linear(np, MT7530_NUM_PHYS,
+	priv->irq_domain = irq_domain_add_linear(np, 32,
 						&mt7530_irq_domain_ops, priv);
 	if (!priv->irq_domain) {
 		dev_err(dev, "failed to create IRQ domain\n");
@@ -1982,6 +2037,7 @@ mt7530_setup_irq(struct mt7530_priv *priv)
 static void
 mt7530_free_mdio_irq(struct mt7530_priv *priv)
 {
+	unsigned int irq_bmu;
 	int p;
 
 	for (p = 0; p < MT7530_NUM_PHYS; p++) {
@@ -1992,6 +2048,10 @@ mt7530_free_mdio_irq(struct mt7530_priv *priv)
 			irq_dispose_mapping(irq);
 		}
 	}
+
+	/* Remove BMU interrupt */
+	irq_bmu = irq_find_mapping(priv->irq_domain, SYS_BMU_INT);
+	irq_dispose_mapping(irq_bmu);
 }
 
 
@@ -3169,6 +3229,9 @@ mt7530_probe(struct mdio_device *mdiodev)
 		}
 	}
 
+	/* Setup the Flow Control Status timer. */
+	timer_setup(&priv->fcs_timer, mt7530_fcs_handler, 0);
+
 	priv->bus = mdiodev->bus;
 	priv->dev = &mdiodev->dev;
 	priv->ds->priv = priv;
@@ -3184,6 +3247,10 @@ mt7530_remove(struct mdio_device *mdiodev)
 {
 	struct mt7530_priv *priv = dev_get_drvdata(&mdiodev->dev);
 	int ret = 0;
+
+	if(timer_pending(&priv->fcs_timer)) {
+		del_timer_sync(&priv->fcs_timer);
+	}
 
 	ret = regulator_disable(priv->core_pwr);
 	if (ret < 0)
