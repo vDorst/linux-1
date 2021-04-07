@@ -176,6 +176,14 @@ enum mt7530_vlan_egress_attr {
 #define  AGE_UNIT_MAX			0xfff
 #define  AGE_UNIT(x)			(AGE_UNIT_MASK & (x))
 
+/* Register for Global Flow Control */
+#define MT7530_GFCCR0			0x1fe0
+#define   FC_EN				BIT(31)
+#define   FC_OFF2ON			BIT(29)
+#define   FC_ON2OFF			BIT(28)
+#define   FC_FREE_VLK_HITHD_MASK	0x3FF0000
+#define   FC_FREE_VLK_LOTHD_MASK	0x3FF
+
 /* Register for port STP state control */
 #define MT7530_SSP_P(x)			(0x2000 + ((x) * 0x100))
 #define  FID_PST(x)			((x) & 0x3)
@@ -399,6 +407,7 @@ enum mt7531_sgmii_force_duplex {
 
 /* Register for system interrupt status */
 #define MT7530_SYS_INT_STS		0x700c
+#define  SYS_BMU_INT			17
 
 /* Register for PHY Indirect Access Control */
 #define MT7531_PHY_IAC			0x701C
@@ -812,6 +821,8 @@ struct mt7530_priv {
 	int irq;
 	struct irq_domain *irq_domain;
 	u32 irq_enable;
+
+	struct timer_list	fcs_timer;
 };
 
 struct mt7530_hw_vlan_entry {
