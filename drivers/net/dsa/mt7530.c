@@ -1866,15 +1866,19 @@ mt7530_irq_thread_fn(int irq, void *dev_id)
 	struct mt7530_priv *priv = dev_id;
 	bool handled = false;
 	u32 val;
+	u32 irq_en;
 	int p;
 
 	mutex_lock_nested(&priv->bus->mdio_lock, MDIO_MUTEX_NESTED);
+	irq_en = mt7530_mii_read(priv, MT7530_SYS_INT_EN);
 	val = mt7530_mii_read(priv, MT7530_SYS_INT_STS);
 	mt7530_mii_write(priv, MT7530_SYS_INT_STS, val);
 	mutex_unlock(&priv->bus->mdio_lock);
+	
+	dev_err(priv->dev, "IRQ: 0x%8x EN 0x%8x", val, irq_en);
 
 	for (p = 0; p < MT7530_NUM_PHYS; p++) {
-		if (BIT(p) & val) {
+		if (BIT(p << 8) & val) {
 			unsigned int irq;
 
 			irq = irq_find_mapping(priv->irq_domain, p);
@@ -1981,12 +1985,16 @@ mt7530_setup_mdio_irq(struct mt7530_priv *priv)
 	struct dsa_switch *ds = priv->ds;
 	int p;
 
+	dev_err(priv->dev, "phys_mii_mask 0x%x PHYNUM %d",
+		ds->phys_mii_mask, MT7530_NUM_PHYS);
+
 	for (p = 0; p < MT7530_NUM_PHYS; p++) {
 		if (BIT(p) & ds->phys_mii_mask) {
 			unsigned int irq;
 
-			irq = irq_create_mapping(priv->irq_domain, p);
+			irq = irq_create_mapping(priv->irq_domain, p + 8);
 			ds->slave_mii_bus->irq[p] = irq;
+			dev_err(priv->dev, "P%d: IRQ: %d", p, irq);
 		}
 	}
 
